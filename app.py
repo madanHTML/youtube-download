@@ -1,11 +1,30 @@
 from flask import Flask, request, jsonify, send_from_directory
 import yt_dlp
 import os
+import shutil
+import uuid
 
 app = Flask(__name__)
 
-# Render Secret File पाथ, ENV से भी सेट हो सकता है
-cookie_file = os.getenv("COOKIE_FILE", "/etc/secrets/cookies.txt")
+# Secret cookie file (Render mounts as read-only)
+SEC_COOKIE = os.getenv("COOKIE_FILE", "/etc/secrets/cookies.txt")
+# Writable temp location
+TMP_COOKIE = "/tmp/cookies.txt"
+
+def prepare_cookiefile() -> str | None:
+    """
+    Copy secret cookies to /tmp so yt-dlp can read/write without
+    hitting read-only errors. Return path to use or None.
+    """
+    try:
+        if os.path.exists(SEC_COOKIE):
+            # Copy on each request so fresh secret is used
+            shutil.copy(SEC_COOKIE, TMP_COOKIE)
+            return TMP_COOKIE
+        return None
+    except Exception:
+        # As last resort, try using secret path read-only
+        return SEC_COOKIE if os.path.exists(SEC_COOKIE) else None
 
 @app.route("/")
 def home():
@@ -15,6 +34,23 @@ def home():
 def serve_js():
     return send_from_directory(".", "main.js")
 
+@app.route("/check-cookies")
+def check_cookies():
+    path = SEC_COOKIE
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                head = []
+                for _ in range(5):
+                    try:
+                        head.append(next(f).strip())
+                    except StopIteration:
+                        break
+            return jsonify({"status": "found", "path": path, "preview": head})
+        except Exception as e:
+            return jsonify({"status": "error", "path": path, "error": str(e)}), 500
+    return jsonify({"status": "missing", "path": path}), 404
+
 @app.route("/formats", methods=["POST"])
 def formats():
     try:
@@ -22,13 +58,16 @@ def formats():
         if not url:
             return jsonify({"error": "URL required"}), 400
 
-        if not os.path.exists(cookie_file):
-            return jsonify({"error": f"Cookie file missing at {cookie_file}"}), 500
+        cookiefile = prepare_cookiefile()
 
         ydl_opts = {
-            "cookiefile": cookie_file,
+            "cookiefile": cookiefile,     # may be None -> no cookies
             "quiet": True,
             "noprogress": True,
+            # हल्का थ्रॉटल ताकि 429 कम लगे
+            "ratelimit": None,
+            "sleep_interval_requests": 1,
+            "max_sleep_interval_requests": 3,
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -45,27 +84,61 @@ def formats():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-@app.route("/check-cookies")
-def check_cookies():
+@app.route("/download", methods=["POST"])
+def download():
     try:
-        if os.path.exists(cookie_file):
-            with open(cookie_file, "r", encoding="utf-8", errors="ignore") as f:
-                preview = [next(f).strip() for _ in range(5)]
-            return jsonify({
-                "status": "found",
-                "path": cookie_file,
-                "preview": preview
-            })
-        else:
-            return jsonify({
-                "status": "missing",
-                "path": cookie_file
-            }), 404
+        data = request.json or {}
+        url = data.get("url")
+        format_id = data.get("format_id")
+        audio_as_mp3 = data.get("audio_as_mp3", False)
+
+        if not url or not format_id:
+            return jsonify({"error": "URL and format_id required"}), 400
+
+        out_ext = "mp3" if audio_as_mp3 else "mp4"
+        out_name = f"{uuid.uuid4()}.{out_ext}"
+
+        cookiefile = prepare_cookiefile()
+
+        # video+audio auto-merge unless '+' already present or only-audio wanted
+        ydl_fmt = format_id if (audio_as_mp3 or '+' in format_id) else f"{format_id}+bestaudio"
+
+        ydl_opts = {
+            "cookiefile": cookiefile,
+            "format": ydl_fmt,
+            "outtmpl": out_name,
+            "merge_output_format": "mp4",
+            "quiet": True,
+            "noprogress": True,
+        }
+        if audio_as_mp3:
+            ydl_opts["postprocessors"] = [{
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3"
+            }]
+
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+
+        if not os.path.exists(out_name):
+            return jsonify({"error": "Download failed"}), 500
+
+        # फ़ाइल को बाइनरी रीड कर के JSON में base64 नहीं भेज रहे;
+        # इस मिनिमल API में फ्रंटएंड सीधा डाउनलोड एन्डपॉइंट हिट करेगा।
+        return send_from_directory(".", out_name, as_attachment=True)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    finally:
+        # सफ़ाई: आउटपुट फाइल हटा दें
+        try:
+            if 'out_name' in locals() and os.path.exists(out_name):
+                os.remove(out_name)
+        except Exception:
+            pass
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
+
 
 
 
@@ -301,6 +374,7 @@ if __name__ == "__main__":
 #    app.run(debug=True)
 
 #
+
 
 
 
