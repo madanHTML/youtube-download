@@ -9,7 +9,7 @@ searchBtn.onclick = async () => {
     let url = ytUrl.value.trim();
     if (!url) { alert("Link jaruri hai."); return; }
 
-    let res = await fetch('http://127.0.0.1:5000/formats', {
+    let res = await fetch('https://video-downloader-lxkw.onrender.com/formats', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url })
@@ -55,7 +55,7 @@ document.getElementById('audio-dropbtn').onclick = function() {
 
 // ---------- Download ----------
 async function downloadFile(url, formatId) {
-    let res = await fetch('http://127.0.0.1:5000/download', {
+    let res = await fetch('https://video-downloader-lxkw.onrender.com/download', {
         method: 'POST',
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: url, format_id: formatId })
@@ -351,3 +351,4 @@ fetch('/formats', {
         aq.innerHTML += `<option value="${f.id}">${f.ext} (${f.id})</option>`;
     });
 //}); */
+
