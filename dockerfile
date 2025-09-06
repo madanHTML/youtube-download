@@ -1,18 +1,22 @@
-FROM python:3.11-slim
-
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends ffmpeg wget curl ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
+FROM python:3.10-slim
 
 WORKDIR /app
 
+# Install ffmpeg (yt-dlp ke liye required)
+RUN apt-get update && apt-get install -y ffmpeg && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements first (better caching)
 COPY requirements.txt .
+
+# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy project files (app.py, index.html, main.js, cookies.txt if exists)
 COPY . .
 
-ENV PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PORT=8080
+# Expose port (Render / Railway / Heroku use PORT env automatically)
+EXPOSE 10000
 
-CMD ["gunicorn", "--workers=2", "--threads=4", "--timeout=180", "--bind", "0.0.0.0:8080", "app:app"]
+# Start the app
+CMD ["python", "app.py"]
+
