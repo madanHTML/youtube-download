@@ -1,31 +1,20 @@
 from flask import Flask, request, jsonify, send_from_directory
 import yt_dlp
-import uuid
 import os
-import shutil
-import tempfile
 
 app = Flask(__name__)
 
-# Global progress store
-progress = {}
-
-# Cookie file path (Render secret file)
+# Render Secret File पाथ, ENV से भी सेट हो सकता है
 cookie_file = os.getenv("COOKIE_FILE", "/etc/secrets/cookies.txt")
 
-
-# ----------------- Serve frontend -----------------
 @app.route("/")
 def home():
-    return send_from_directory(".", "index.html")  # index.html same folder
-
+    return send_from_directory(".", "index.html")
 
 @app.route("/main.js")
 def serve_js():
-    return send_from_directory(".", "main.js")  # main.js same folder
+    return send_from_directory(".", "main.js")
 
-
-# ----------------- Get available formats -----------------
 @app.route("/formats", methods=["POST"])
 def formats():
     try:
@@ -33,23 +22,18 @@ def formats():
         if not url:
             return jsonify({"error": "URL required"}), 400
 
-        out = []
+        if not os.path.exists(cookie_file):
+            return jsonify({"error": f"Cookie file missing at {cookie_file}"}), 500
 
-        # --- Safe cookie handling (temp copy) ---
-        tmp_cookie = None
-        if os.path.exists(cookie_file):
-            tmp_cookie = os.path.join(tempfile.gettempdir(), "cookies.txt")
-            shutil.copy(cookie_file, tmp_cookie)
-
-        # yt_dlp options
         ydl_opts = {
-            "cookiefile": tmp_cookie,
+            "cookiefile": cookie_file,
             "quiet": True,
-            "noprogress": True
+            "noprogress": True,
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)  # metadata only
+            info = ydl.extract_info(url, download=False)
+            out = []
             for f in info.get("formats", []):
                 out.append({
                     "format_id": f.get("format_id"),
@@ -57,14 +41,10 @@ def formats():
                     "resolution": f.get("resolution"),
                     "filesize": f.get("filesize")
                 })
-
         return jsonify(out)
-
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-
-# ----------------- Check cookies file -----------------
 @app.route("/check-cookies")
 def check_cookies():
     try:
@@ -84,8 +64,6 @@ def check_cookies():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-
-# ----------------- Run app -----------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
 
@@ -323,5 +301,6 @@ if __name__ == "__main__":
 #    app.run(debug=True)
 
 #
+
 
 
