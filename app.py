@@ -5,6 +5,10 @@ import os
 
 app = Flask(__name__)
 
+# Global progress store
+progress = {}
+cookie_file = "/etc/secrets/cookies.txt"
+
 # Serve frontend
 @app.route("/")
 def home():
@@ -22,6 +26,12 @@ def formats():
         if not url:
             return jsonify({"error": "URL required"}), 400
         out = []
+
+           ydl_opts = {
+            "cookiefile": cookie_file if os.path.exists(cookie_file) else None,
+            "quiet": True,
+            "noprogress": True
+        }
         with yt_dlp.YoutubeDL({}) as ydl:
             info = ydl.extract_info(url, download=False)  # metadata only [4]
             for f in info.get("formats", []):
@@ -348,4 +358,5 @@ if __name__ == "__main__":
 #
 #if __name__ == "__main__":
 #    app.run(debug=True)
+
 #
