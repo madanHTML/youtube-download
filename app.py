@@ -1,7 +1,9 @@
-from flask import Flask, request, jsonify, send_file, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory
 import yt_dlp
 import uuid
 import os
+import shutil
+import tempfile
 
 app = Flask(__name__)
 
@@ -33,9 +35,15 @@ def formats():
 
         out = []
 
+        # --- Safe cookie handling (temp copy) ---
+        tmp_cookie = None
+        if os.path.exists(cookie_file):
+            tmp_cookie = os.path.join(tempfile.gettempdir(), "cookies.txt")
+            shutil.copy(cookie_file, tmp_cookie)
+
         # yt_dlp options
         ydl_opts = {
-            "cookiefile": cookie_file if os.path.exists(cookie_file) else None,
+            "cookiefile": tmp_cookie,
             "quiet": True,
             "noprogress": True
         }
@@ -80,6 +88,7 @@ def check_cookies():
 # ----------------- Run app -----------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
+
 
 
 
@@ -314,4 +323,5 @@ if __name__ == "__main__":
 #    app.run(debug=True)
 
 #
+
 
