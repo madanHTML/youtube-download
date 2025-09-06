@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, send_file, send_from_directory, after_this_request
+from flask import Flask, request, jsonify, send_file, send_from_directory
 import yt_dlp
 import uuid
 import os
@@ -7,126 +7,80 @@ app = Flask(__name__)
 
 # Global progress store
 progress = {}
-cookie_file = "/etc/secrets/cookies.txt"
 
-# Serve frontend
+# Cookie file path (Render secret file)
+cookie_file = os.getenv("COOKIE_FILE", "/etc/secrets/cookies.txt")
+
+
+# ----------------- Serve frontend -----------------
 @app.route("/")
 def home():
-    return send_from_directory(".", "index.html")  # index.html same folder [4]
+    return send_from_directory(".", "index.html")  # index.html same folder
+
 
 @app.route("/main.js")
 def serve_js():
-    return send_from_directory(".", "main.js")     # main.js same folder [4]
+    return send_from_directory(".", "main.js")  # main.js same folder
 
-# Get available formats (optional for UI)
+
+# ----------------- Get available formats -----------------
 @app.route("/formats", methods=["POST"])
 def formats():
     try:
         url = (request.json or {}).get("url")
         if not url:
             return jsonify({"error": "URL required"}), 400
+
         out = []
 
-           ydl_opts = {
+        # yt_dlp options
+        ydl_opts = {
             "cookiefile": cookie_file if os.path.exists(cookie_file) else None,
             "quiet": True,
             "noprogress": True
         }
-        with yt_dlp.YoutubeDL({}) as ydl:
-            info = ydl.extract_info(url, download=False)  # metadata only [4]
-            for f in info.get("formats", []):
-                out.append({
-                    "id": f.get("format_id"),
-                    "ext": f.get("ext"),
-                    "height": f.get("height"),
-                    "abr": f.get("abr"),
-                    "vcodec": f.get("vcodec"),
-                    "acodec": f.get("acodec"),
-                    "note": f.get("format_note", ""),
-                    "audio_only": f.get("acodec") != "none" and f.get("vcodec") == "none",
-                    "video_only": f.get("vcodec") != "none" and f.get("acodec") == "none",
-                })
-        return jsonify({"formats": out})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-# Universal download route – robust audio+video merge
-@app.route("/download", methods=["POST"])
-def download():
-    try:
-        data = request.json or {}
-        url = data.get("url")
-        format_id = data.get("format_id")          # optional; if not sent, we auto-select
-        audio_as_mp3 = bool(data.get("audio_as_mp3", False))
-
-        if not url:
-            return jsonify({"error": "URL required"}), 400
-
-        # Output filename
-        ext = "mp3" if audio_as_mp3 else "mp4"
-        out_name = f"{uuid.uuid4()}.{ext}"
-
-        # Build robust format selection
-        # Goal: Always return file with audio, prefer H.264 (avc1) + AAC (mp4a), MP4 container
-        use_selector = False
-        fmt_expr = None
-
-        if audio_as_mp3:
-            # Prefer AAC audio stream, else bestaudio; then extract to MP3
-            fmt_expr = "ba[acodec^=mp4a]/bestaudio"  # reliable audio capture [6]
-            use_selector = True
-        else:
-            if format_id and '+' in format_id:
-                ydl_fmt = format_id  # e.g., "137+251" – respect exact combo [4]
-            elif format_id:
-                # Try selected video id with bestaudio; if not available, fallback handled below
-                ydl_fmt = f"{format_id}+bestaudio/b"  # graceful fallback [6]
-            else:
-                use_selector = True
-
-        if use_selector:
-            # Prefer 480p+ H.264 video + AAC audio -> progressive MP4 -> generic bv+ba -> best
-            fmt_expr = fmt_expr or (
-                "bv*[height>=480][vcodec^=avc1]+ba[acodec^=mp4a]/"
-                "b[ext=mp4]/"
-                "bv*+ba/b"
-            )  # avoids silent video and maximizes device compatibility [6][4]
-
-        ydl_opts = {
-            "format": fmt_expr if use_selector else ydl_fmt,
-            "merge_output_format": "mp4",  # final container [4]
-            "outtmpl": out_name,
-            "noprogress": False,
-            "quiet": False,
-        }
-
-        if audio_as_mp3:
-            ydl_opts["postprocessors"] = [
-                {"key": "FFmpegExtractAudio", "preferredcodec": "mp3"}
-            ]  # extract to MP3 after grabbing AAC/bestaudio [4]
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])  # download + merge via ffmpeg [4]
+            info = ydl.extract_info(url, download=False)  # metadata only
+            for f in info.get("formats", []):
+                out.append({
+                    "format_id": f.get("format_id"),
+                    "ext": f.get("ext"),
+                    "resolution": f.get("resolution"),
+                    "filesize": f.get("filesize")
+                })
 
-        if not os.path.exists(out_name):
-            return jsonify({"error": "Download failed"}), 500
+        return jsonify(out)
 
-        @after_this_request
-        def cleanup(response):
-            try:
-                if os.path.exists(out_name):
-                    os.remove(out_name)
-            except Exception:
-                pass
-            return response
-
-        return send_file(out_name, as_attachment=True)
     except Exception as e:
-        # Return readable error to UI
         return jsonify({"error": str(e)}), 500
 
+
+# ----------------- Check cookies file -----------------
+@app.route("/check-cookies")
+def check_cookies():
+    try:
+        if os.path.exists(cookie_file):
+            with open(cookie_file, "r", encoding="utf-8", errors="ignore") as f:
+                preview = [next(f).strip() for _ in range(5)]
+            return jsonify({
+                "status": "found",
+                "path": cookie_file,
+                "preview": preview
+            })
+        else:
+            return jsonify({
+                "status": "missing",
+                "path": cookie_file
+            }), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ----------------- Run app -----------------
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(host="0.0.0.0", port=5000)
+
 
 
 
@@ -360,3 +314,4 @@ if __name__ == "__main__":
 #    app.run(debug=True)
 
 #
+
