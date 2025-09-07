@@ -32,7 +32,7 @@ def build_ydl_opts(for_download=False):
         "cookiefile": cookiefile,          # None => no cookies
         "user_agent": BROWSER_UA,
         "quiet": False,
-        "verbose": True,                   # check logs for: Using cookies from /tmp/cookies.txt
+        "verbose": True,
         "noprogress": True,
         # light throttling to reduce 429
         "sleep_interval_requests": 1,
@@ -60,7 +60,7 @@ def check_cookies():
         "tmp_exists": os.path.exists(TMP_COOKIE)
     })
 
-# Get available formats
+# ✅ Fixed Formats Endpoint
 @app.route("/formats", methods=["POST"])
 def formats():
     url = (request.json or {}).get("url")
@@ -69,15 +69,34 @@ def formats():
     try:
         with yt_dlp.YoutubeDL(build_ydl_opts(False)) as ydl:
             info = ydl.extract_info(url, download=False)
-        out = []
+
+        video_formats = []
+        audio_formats = []
+
         for f in info.get("formats", []):
-            out.append({
+            entry = {
                 "format_id": f.get("format_id"),
                 "ext": f.get("ext"),
-                "resolution": f.get("resolution"),
-                "filesize": f.get("filesize")
-            })
-        return jsonify(out)
+                "filesize": f.get("filesize"),
+                "resolution": f.get("resolution") or (f"{f.get('width')}x{f.get('height')}" if f.get("height") else None),
+                "abr": f.get("abr"),
+                "vcodec": f.get("vcodec"),
+                "acodec": f.get("acodec"),
+            }
+
+            # Separate audio and video
+            if f.get("vcodec") == "none":
+                audio_formats.append(entry)
+            else:
+                video_formats.append(entry)
+
+        return jsonify({
+            "title": info.get("title"),
+            "thumbnail": info.get("thumbnail"),
+            "video_formats": video_formats,
+            "audio_formats": audio_formats
+        })
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -93,16 +112,13 @@ def download():
 
     saved = {"file": None}
     def hook(d):
-        # Keep final path for response
         if d.get("status") == "finished":
-            # Prefer _filename (final) if present
             info = d.get("info_dict") or {}
             saved["file"] = info.get("_filename") or d.get("filename")
 
     ydl_opts = build_ydl_opts(True)
     ydl_opts["progress_hooks"] = [hook]
 
-    # video+audio auto merge
     if audio_as_mp3:
         ydl_opts["format"] = format_id
         ydl_opts["postprocessors"] = [{
@@ -127,9 +143,6 @@ def download():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
-
-
-
 
 
 
@@ -364,6 +377,7 @@ if __name__ == "__main__":
 #    app.run(debug=True)
 
 #
+
 
 
 
