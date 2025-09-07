@@ -1,26 +1,28 @@
 from flask import Flask, request, jsonify, send_from_directory, send_file
-import yt_dlp, os, shutil, uuid
+import yt_dlp, os, shutil
 
 app = Flask(__name__)
 
-# 1) Secret cookies (read-only) -> copy to /tmp so yt-dlp can touch file safely
+# -------------------------
+# 🔧 Config
+# -------------------------
 SEC_COOKIE = os.getenv("COOKIE_FILE", "/etc/secrets/cookies.txt")
 TMP_COOKIE = "/tmp/cookies.txt"
-
-# 2) Fixed download dir
 DOWNLOAD_DIR = "/tmp/downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-# 3) Use same UA as the browser used to export cookies (override via ENV if needed)
 BROWSER_UA = os.getenv(
     "BROWSER_UA",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
 
+# -------------------------
+# 🔧 Helpers
+# -------------------------
 def prepare_cookiefile():
     try:
         if os.path.exists(SEC_COOKIE):
-            shutil.copy(SEC_COOKIE, TMP_COOKIE)   # avoid Errno 30 (read-only)
+            shutil.copy(SEC_COOKIE, TMP_COOKIE)
             return TMP_COOKIE
     except Exception:
         pass
@@ -29,12 +31,11 @@ def prepare_cookiefile():
 def build_ydl_opts(for_download=False):
     cookiefile = prepare_cookiefile()
     opts = {
-        "cookiefile": cookiefile,          # None => no cookies
+        "cookiefile": cookiefile,
         "user_agent": BROWSER_UA,
         "quiet": False,
         "verbose": True,
         "noprogress": True,
-        # light throttling to reduce 429
         "sleep_interval_requests": 1,
         "max_sleep_interval_requests": 3,
     }
@@ -42,6 +43,9 @@ def build_ydl_opts(for_download=False):
         opts["outtmpl"] = os.path.join(DOWNLOAD_DIR, "%(title)s [%(id)s].%(ext)s")
     return opts
 
+# -------------------------
+# 🏠 Static files
+# -------------------------
 @app.route("/")
 def home():
     return send_from_directory(".", "index.html")
@@ -50,7 +54,9 @@ def home():
 def js():
     return send_from_directory(".", "main.js")
 
-# Quick diagnostics for cookies state
+# -------------------------
+# 🔍 Check cookies
+# -------------------------
 @app.route("/check-cookies")
 def check_cookies():
     return jsonify({
@@ -60,53 +66,67 @@ def check_cookies():
         "tmp_exists": os.path.exists(TMP_COOKIE)
     })
 
-# ✅ Fixed Formats Endpoint
+# -------------------------
+# ✅ Formats endpoint (FIXED)
+# -------------------------
 @app.route("/formats", methods=["POST"])
 def formats():
-    url = (request.json or {}).get("url")
-    if not url:
-        return jsonify({"error": "URL required"}), 400
     try:
+        url = (request.json or {}).get("url")
+        if not url:
+            return jsonify({"error": "URL required"}), 400
+
+        out = []
         with yt_dlp.YoutubeDL(build_ydl_opts(False)) as ydl:
             info = ydl.extract_info(url, download=False)
 
-        video_formats = []
-        audio_formats = []
+            for f in info.get("formats", []):
+                out.append({
+                    "format_id": f.get("format_id"),   # ✅ FIXED
+                    "ext": f.get("ext"),
+                    "height": f.get("height"),
+                    "abr": f.get("abr"),
+                    "vcodec": f.get("vcodec"),
+                    "acodec": f.get("acodec"),
+                    "note": f.get("format_note", ""),
+                    "audio_only": f.get("acodec") != "none" and f.get("vcodec") == "none",
+                    "video_only": f.get("vcodec") != "none" and f.get("acodec") == "none",
+                })
 
-        for f in info.get("formats", []):
-            entry = {
-                "format_id": f.get("format_id"),
-                "ext": f.get("ext"),
-                "filesize": f.get("filesize"),
-                "resolution": f.get("resolution") or (f"{f.get('width')}x{f.get('height')}" if f.get("height") else None),
-                "abr": f.get("abr"),
-                "vcodec": f.get("vcodec"),
-                "acodec": f.get("acodec"),
-            }
-
-            # Separate audio and video
-            if f.get("vcodec") == "none":
-                audio_formats.append(entry)
-            else:
-                video_formats.append(entry)
+        # Extra: Add MP3 virtual option if audio exists
+        audio_formats = [f for f in out if f["audio_only"]]
+        if audio_formats:
+            best_audio = max(audio_formats, key=lambda a: a.get("abr") or 0)
+            out.append({
+                "format_id": best_audio["format_id"],   # ✅ FIXED
+                "ext": "mp3",
+                "abr": best_audio.get("abr"),
+                "vcodec": "none",
+                "acodec": "mp3",
+                "note": "Extracted MP3",
+                "audio_only": True,
+                "video_only": False
+            })
 
         return jsonify({
+            "formats": out,
             "title": info.get("title"),
-            "thumbnail": info.get("thumbnail"),
-            "video_formats": video_formats,
-            "audio_formats": audio_formats
+            "thumbnail": info.get("thumbnail")
         })
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# Download endpoint
+# -------------------------
+# ✅ Download endpoint
+# -------------------------
 @app.route("/download", methods=["POST"])
 def download():
     data = request.json or {}
     url = data.get("url")
     format_id = data.get("format_id")
     audio_as_mp3 = data.get("audio_as_mp3", False)
+
     if not url or not format_id:
         return jsonify({"error": "URL and format_id required"}), 400
 
@@ -119,7 +139,7 @@ def download():
     ydl_opts = build_ydl_opts(True)
     ydl_opts["progress_hooks"] = [hook]
 
-    if audio_as_mp3:
+    if audio_as_mp3 or str(format_id).endswith(".mp3"):
         ydl_opts["format"] = format_id
         ydl_opts["postprocessors"] = [{
             "key": "FFmpegExtractAudio",
@@ -138,12 +158,15 @@ def download():
             return jsonify({"error": "Download failed"}), 500
 
         return send_file(path, as_attachment=True)
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+# -------------------------
+# 🚀 Run
+# -------------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
-
 
 
 
@@ -377,6 +400,7 @@ if __name__ == "__main__":
 #    app.run(debug=True)
 
 #
+
 
 
 
