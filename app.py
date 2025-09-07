@@ -42,7 +42,7 @@ def build_ydl_opts(for_download=False):
         opts["outtmpl"] = os.path.join(DOWNLOAD_DIR, "%(title)s [%(id)s].%(ext)s")
     return opts
 
-@app.route("/index.html")
+@app.route("/")
 def home():
     return send_from_directory(".", "index.html")
 
@@ -364,6 +364,7 @@ if __name__ == "__main__":
 #    app.run(debug=True)
 
 #
+
 
 
 
