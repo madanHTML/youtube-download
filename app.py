@@ -6,7 +6,6 @@ import shutil
 from datetime import datetime
 
 app = Flask(__name__)
-
 # -------------------------
 # 🔧 Config
 # -------------------------
@@ -19,7 +18,6 @@ BROWSER_UA = os.getenv(
     "BROWSER_UA",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
-
 # -------------------------
 # 🔧 Helpers
 # -------------------------
@@ -31,10 +29,8 @@ def prepare_cookiefile():
     except Exception:
         pass
     return SEC_COOKIE if os.path.exists(SEC_COOKIE) else None
-
 progress = {}
 cookie_file = "cookies.txt"
-
 # -------------------------
 # Serve frontend
 # -------------------------
@@ -45,7 +41,6 @@ def home():
 @app.route("/main.js")
 def serve_js():
     return send_from_directory(".", "main.js")
-
 # -------------------------
 # 🔍 Check cookies
 # -------------------------
@@ -57,7 +52,6 @@ def check_cookies():
         "tmp_path": TMP_COOKIE,
         "tmp_exists": os.path.exists(TMP_COOKIE)
     })
-
 # ✅ Robots.txt serve
 @app.route("/robots.txt")
 def robots():
@@ -65,7 +59,6 @@ def robots():
         "User-agent: *\nAllow: /\nSitemap: https://dolodear-1.onrender.com/sitemap.xml",
         mimetype="text/plain"
     )
-
 # ✅ Sitemap.xml dynamic
 @app.route("/sitemap.xml")
 def sitemap():
@@ -74,7 +67,6 @@ def sitemap():
         {"loc": "https://dolodear-1.onrender.com/formats", "priority": "0.8", "changefreq": "weekly"},
         {"loc": "https://dolodear-1.onrender.com/download", "priority": "0.8", "changefreq": "weekly"},
     ]
-
     xml = ['<?xml version="1.0" encoding="UTF-8"?>']
     xml.append('<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">')
 
@@ -88,7 +80,6 @@ def sitemap():
         
     xml.append("</urlset>")
     return Response("\n".join(xml), mimetype="application/xml")
-
 # ===============================
 # 🎥 Get available formats + metadata
 # ===============================
@@ -104,7 +95,6 @@ def formats():
             "quiet": True,
             "noprogress": True
         }
-
         out = []
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -117,7 +107,6 @@ def formats():
                 "uploader": info.get("uploader"),
                 "view_count": info.get("view_count"),
             }
-
             for f in info.get("formats", []):
                 out.append({
                     "id": f.get("format_id"),
@@ -144,7 +133,6 @@ def download():
         url = data.get("url")
         format_id = data.get("format_id")
         audio_as_mp3 = bool(data.get("audio_as_mp3", False))
-
         if not url:
             return jsonify({"error": "URL required"}), 400
 
@@ -159,7 +147,6 @@ def download():
             fmt_expr = "ba[acodec^=mp4a]/bestaudio"
         else:
             fmt_expr = format_id or "bv*[height>=480][vcodec^=avc1]+ba/best"
-
         ydl_opts = {
             "format": fmt_expr,
             "merge_output_format": "mp4" if not audio_as_mp3 else None,
@@ -179,7 +166,6 @@ def download():
             ydl_opts["postprocessors"] = [
                 {"key": "FFmpegExtractAudio", "preferredcodec": "mp3"}
             ]
-
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
 
@@ -449,6 +435,7 @@ if __name__ == "__main__":
 #    app.run(debug=True)
 
 #
+
 
 
 
