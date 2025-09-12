@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, send_from_directory, send_file
+from flask import Flask, request, jsonify, send_from_directory, send_file, Response
 import yt_dlp, os, shutil
 
 app = Flask(__name__)
@@ -55,6 +55,47 @@ def js():
     return send_from_directory(".", "main.js")
 
 # -------------------------
+# 🤖 Robots.txt
+# -------------------------
+@app.route("/robots.txt")
+def robots():
+    content = """User-agent: *
+Disallow:
+
+Sitemap: https://yourdomain.com/sitemap.xml
+"""
+    return Response(content, mimetype="text/plain")
+
+# -------------------------
+# 🗺️ Sitemap.xml
+# -------------------------
+@app.route("/sitemap.xml")
+def sitemap():
+    content = """<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+   <url>
+      <loc>https://yourdomain.com/</loc>
+      <lastmod>2025-09-12</lastmod>
+      <changefreq>weekly</changefreq>
+      <priority>1.0</priority>
+   </url>
+   <url>
+      <loc>https://yourdomain.com/formats</loc>
+      <lastmod>2025-09-12</lastmod>
+      <changefreq>weekly</changefreq>
+      <priority>0.8</priority>
+   </url>
+   <url>
+      <loc>https://yourdomain.com/download</loc>
+      <lastmod>2025-09-12</lastmod>
+      <changefreq>weekly</changefreq>
+      <priority>0.8</priority>
+   </url>
+</urlset>
+"""
+    return Response(content, mimetype="application/xml")
+
+# -------------------------
 # 🔍 Check cookies
 # -------------------------
 @app.route("/check-cookies")
@@ -67,7 +108,7 @@ def check_cookies():
     })
 
 # -------------------------
-# ✅ Formats endpoint (FIXED)
+# ✅ Formats endpoint
 # -------------------------
 @app.route("/formats", methods=["POST"])
 def formats():
@@ -82,7 +123,7 @@ def formats():
 
             for f in info.get("formats", []):
                 out.append({
-                    "format_id": f.get("format_id"),   # ✅ FIXED
+                    "format_id": f.get("format_id"),
                     "ext": f.get("ext"),
                     "height": f.get("height"),
                     "abr": f.get("abr"),
@@ -98,7 +139,7 @@ def formats():
         if audio_formats:
             best_audio = max(audio_formats, key=lambda a: a.get("abr") or 0)
             out.append({
-                "format_id": best_audio["format_id"],   # ✅ FIXED
+                "format_id": best_audio["format_id"],
                 "ext": "mp3",
                 "abr": best_audio.get("abr"),
                 "vcodec": "none",
@@ -167,6 +208,7 @@ def download():
 # -------------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
+
 
 
 
@@ -398,6 +440,7 @@ if __name__ == "__main__":
 #    app.run(debug=True)
 
 #
+
 
 
 
