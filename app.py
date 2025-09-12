@@ -2,38 +2,15 @@ from flask import Flask, request, jsonify, send_file, send_from_directory, after
 import yt_dlp
 import uuid
 import os
-import shutil
 from datetime import datetime
 
 app = Flask(__name__)
-# -------------------------
-# 🔧 Config
-# -------------------------
-SEC_COOKIE = os.getenv("COOKIE_FILE", "/etc/secrets/cookies.txt")
-TMP_COOKIE = "/tmp/cookies.txt"
-DOWNLOAD_DIR = "/tmp/downloads"
-os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-BROWSER_UA = os.getenv(
-    "BROWSER_UA",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-)
-# -------------------------
-# 🔧 Helpers
-# -------------------------
-def prepare_cookiefile():
-    try:
-        if os.path.exists(SEC_COOKIE):
-            shutil.copy(SEC_COOKIE, TMP_COOKIE)
-            return TMP_COOKIE
-    except Exception:
-        pass
-    return SEC_COOKIE if os.path.exists(SEC_COOKIE) else None
+# Global progress store
 progress = {}
 cookie_file = "cookies.txt"
-# -------------------------
+
 # Serve frontend
-# -------------------------
 @app.route("/")
 def home():
     return send_from_directory(".", "index.html")
@@ -41,17 +18,7 @@ def home():
 @app.route("/main.js")
 def serve_js():
     return send_from_directory(".", "main.js")
-# -------------------------
-# 🔍 Check cookies
-# -------------------------
-@app.route("/check-cookies")
-def check_cookies():
-    return jsonify({
-        "sec_path": SEC_COOKIE,
-        "sec_exists": os.path.exists(SEC_COOKIE),
-        "tmp_path": TMP_COOKIE,
-        "tmp_exists": os.path.exists(TMP_COOKIE)
-    })
+
 # ✅ Robots.txt serve
 @app.route("/robots.txt")
 def robots():
@@ -59,6 +26,7 @@ def robots():
         "User-agent: *\nAllow: /\nSitemap: https://dolodear-1.onrender.com/sitemap.xml",
         mimetype="text/plain"
     )
+
 # ✅ Sitemap.xml dynamic
 @app.route("/sitemap.xml")
 def sitemap():
@@ -67,6 +35,7 @@ def sitemap():
         {"loc": "https://dolodear-1.onrender.com/formats", "priority": "0.8", "changefreq": "weekly"},
         {"loc": "https://dolodear-1.onrender.com/download", "priority": "0.8", "changefreq": "weekly"},
     ]
+
     xml = ['<?xml version="1.0" encoding="UTF-8"?>']
     xml.append('<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">')
 
@@ -77,12 +46,15 @@ def sitemap():
         xml.append(f"<changefreq>{page['changefreq']}</changefreq>")
         xml.append(f"<priority>{page['priority']}</priority>")
         xml.append("</url>")
-        
+
     xml.append("</urlset>")
     return Response("\n".join(xml), mimetype="application/xml")
+
 # ===============================
-# 🎥 Get available formats + metadata
+# Existing YT-DLP routes (unchanged)
 # ===============================
+
+# Get available formats
 @app.route("/formats", methods=["POST"])
 def formats():
     try:
@@ -95,18 +67,10 @@ def formats():
             "quiet": True,
             "noprogress": True
         }
+
         out = []
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
-
-            # ✅ extra metadata
-            metadata = {
-                "title": info.get("title"),
-                "thumbnail": info.get("thumbnail"),
-                "duration": info.get("duration"),
-                "uploader": info.get("uploader"),
-                "view_count": info.get("view_count"),
-            }
             for f in info.get("formats", []):
                 out.append({
                     "id": f.get("format_id"),
@@ -119,13 +83,12 @@ def formats():
                     "audio_only": f.get("acodec") != "none" and f.get("vcodec") == "none",
                     "video_only": f.get("vcodec") != "none" and f.get("acodec") == "none",
                 })
-        return jsonify({"metadata": metadata, "formats": out})
+        return jsonify({"formats": out})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# ===============================
-# ⬇️ Download endpoint (video/audio)
-# ===============================
+
+# Download with progress
 @app.route("/download", methods=["POST"])
 def download():
     try:
@@ -133,47 +96,58 @@ def download():
         url = data.get("url")
         format_id = data.get("format_id")
         audio_as_mp3 = bool(data.get("audio_as_mp3", False))
+
         if not url:
             return jsonify({"error": "URL required"}), 400
 
         ext = "mp3" if audio_as_mp3 else "mp4"
-        out_name = os.path.join(DOWNLOAD_DIR, f"{uuid.uuid4()}.{ext}")
+        out_name = f"{uuid.uuid4()}.{ext}"
 
+        # Progress hook
         def my_hook(d):
             progress["status"] = d
 
-        # Format expression
+        # Format selection
+        use_selector = False
+        fmt_expr = None
         if audio_as_mp3:
             fmt_expr = "ba[acodec^=mp4a]/bestaudio"
+            use_selector = True
         else:
-            fmt_expr = format_id or "bv*[height>=480][vcodec^=avc1]+ba/best"
+            if format_id and '+' in format_id:
+                ydl_fmt = format_id
+            elif format_id:
+                ydl_fmt = f"{format_id}+bestaudio/b"
+            else:
+                use_selector = True
+
+        if use_selector:
+            fmt_expr = fmt_expr or (
+                "bv*[height>=480][vcodec^=avc1]+ba[acodec^=mp4a]/"
+                "b[ext=mp4]/"
+                "bv*+ba/b"
+            )
+
         ydl_opts = {
-            "format": fmt_expr,
-            "merge_output_format": "mp4" if not audio_as_mp3 else None,
+            "format": fmt_expr if use_selector else ydl_fmt,
+            "merge_output_format": "mp4",
             "outtmpl": out_name,
             "noprogress": False,
             "quiet": True,
             "progress_hooks": [my_hook],
-            "cookiefile": cookie_file if os.path.exists(cookie_file) else None,
-
-            # ✅ Faster download options
-            "concurrent_fragment_downloads": 5,
-            "http_chunk_size": 5 * 1024 * 1024,
-            "retries": 3,
+            "cookiefile": cookie_file if os.path.exists(cookie_file) else None
         }
 
         if audio_as_mp3:
             ydl_opts["postprocessors"] = [
                 {"key": "FFmpegExtractAudio", "preferredcodec": "mp3"}
             ]
+
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
+            ydl.download([url])
 
         if not os.path.exists(out_name):
             return jsonify({"error": "Download failed"}), 500
-
-        # ✅ Send file with proper name
-        filename = f"{info.get('title')}.{ext}"
 
         @after_this_request
         def cleanup(response):
@@ -184,21 +158,18 @@ def download():
                 pass
             return response
 
-        return send_file(out_name, as_attachment=True, download_name=filename)
+        return send_file(out_name, as_attachment=True)
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# ===============================
-# 📊 Progress endpoint
-# ===============================
+
+# Progress endpoint
 @app.route("/progress", methods=["GET"])
 def get_progress():
     return jsonify(progress)
 
-# ===============================
-# 🚀 Run
-# ===============================
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, debug=False)
@@ -435,6 +406,7 @@ if __name__ == "__main__":
 #    app.run(debug=True)
 
 #
+
 
 
 
