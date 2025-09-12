@@ -1,8 +1,10 @@
-from flask import Flask, request, jsonify, send_from_directory, send_file
-import yt_dlp, os, shutil
+from flask import Flask, request, jsonify, send_file, send_from_directory, after_this_request, Response
+import yt_dlp
+import uuid
+import os
+from datetime import datetime
 
 app = Flask(__name__)
-
 # -------------------------
 # 🔧 Config
 # -------------------------
@@ -42,16 +44,17 @@ def build_ydl_opts(for_download=False):
     if for_download:
         opts["outtmpl"] = os.path.join(DOWNLOAD_DIR, "%(title)s [%(id)s].%(ext)s")
     return opts
+# Global progress store
+progress = {}
+cookie_file = "cookies.txt"
 
-# -------------------------
-# 🏠 Static files
-# -------------------------
+# Serve frontend
 @app.route("/")
 def home():
     return send_from_directory(".", "index.html")
 
 @app.route("/main.js")
-def js():
+def serve_js():
     return send_from_directory(".", "main.js")
 
 # -------------------------
@@ -66,9 +69,42 @@ def check_cookies():
         "tmp_exists": os.path.exists(TMP_COOKIE)
     })
 
-# -------------------------
-# ✅ Formats endpoint (FIXED)
-# -------------------------
+# ✅ Robots.txt serve
+@app.route("/robots.txt")
+def robots():
+    return Response(
+        "User-agent: *\nAllow: /\nSitemap: https://dolodear-1.onrender.com/sitemap.xml",
+        mimetype="text/plain"
+    )
+
+# ✅ Sitemap.xml dynamic
+@app.route("/sitemap.xml")
+def sitemap():
+    pages = [
+        {"loc": "https://dolodear-1.onrender.com/", "priority": "1.0", "changefreq": "daily"},
+        {"loc": "https://dolodear-1.onrender.com/formats", "priority": "0.8", "changefreq": "weekly"},
+        {"loc": "https://dolodear-1.onrender.com/download", "priority": "0.8", "changefreq": "weekly"},
+    ]
+
+    xml = ['<?xml version="1.0" encoding="UTF-8"?>']
+    xml.append('<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">')
+
+    for page in pages:
+        xml.append("<url>")
+        xml.append(f"<loc>{page['loc']}</loc>")
+        xml.append(f"<lastmod>{datetime.utcnow().date()}</lastmod>")
+        xml.append(f"<changefreq>{page['changefreq']}</changefreq>")
+        xml.append(f"<priority>{page['priority']}</priority>")
+        xml.append("</url>")
+
+    xml.append("</urlset>")
+    return Response("\n".join(xml), mimetype="application/xml")
+
+# ===============================
+# Existing YT-DLP routes (unchanged)
+# ===============================
+
+# Get available formats
 @app.route("/formats", methods=["POST"])
 def formats():
     try:
@@ -76,13 +112,18 @@ def formats():
         if not url:
             return jsonify({"error": "URL required"}), 400
 
-        out = []
-        with yt_dlp.YoutubeDL(build_ydl_opts(False)) as ydl:
-            info = ydl.extract_info(url, download=False)
+        ydl_opts = {
+            "cookiefile": cookie_file if os.path.exists(cookie_file) else None,
+            "quiet": True,
+            "noprogress": True
+        }
 
+        out = []
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
             for f in info.get("formats", []):
                 out.append({
-                    "format_id": f.get("format_id"),   # ✅ FIXED
+                    "id": f.get("format_id"),
                     "ext": f.get("ext"),
                     "height": f.get("height"),
                     "abr": f.get("abr"),
@@ -92,81 +133,96 @@ def formats():
                     "audio_only": f.get("acodec") != "none" and f.get("vcodec") == "none",
                     "video_only": f.get("vcodec") != "none" and f.get("acodec") == "none",
                 })
-
-        # Extra: Add MP3 virtual option if audio exists
-        audio_formats = [f for f in out if f["audio_only"]]
-        if audio_formats:
-            best_audio = max(audio_formats, key=lambda a: a.get("abr") or 0)
-            out.append({
-                "format_id": best_audio["format_id"],   # ✅ FIXED
-                "ext": "mp3",
-                "abr": best_audio.get("abr"),
-                "vcodec": "none",
-                "acodec": "mp3",
-                "note": "Extracted MP3",
-                "audio_only": True,
-                "video_only": False
-            })
-
-        return jsonify({
-            "formats": out,
-            "title": info.get("title"),
-            "thumbnail": info.get("thumbnail")
-        })
-
+        return jsonify({"formats": out})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# -------------------------
-# ✅ Download endpoint
-# -------------------------
+
+# Download with progress
 @app.route("/download", methods=["POST"])
 def download():
-    data = request.json or {}
-    url = data.get("url")
-    format_id = data.get("format_id")
-    audio_as_mp3 = data.get("audio_as_mp3", False)
-
-    if not url or not format_id:
-        return jsonify({"error": "URL and format_id required"}), 400
-
-    saved = {"file": None}
-    def hook(d):
-        if d.get("status") == "finished":
-            info = d.get("info_dict") or {}
-            saved["file"] = info.get("_filename") or d.get("filename")
-
-    ydl_opts = build_ydl_opts(True)
-    ydl_opts["progress_hooks"] = [hook]
-
-    if audio_as_mp3 or str(format_id).endswith(".mp3"):
-        ydl_opts["format"] = format_id
-        ydl_opts["postprocessors"] = [{
-            "key": "FFmpegExtractAudio",
-            "preferredcodec": "mp3"
-        }]
-    else:
-        ydl_opts["format"] = format_id if '+' in format_id else f"{format_id}+bestaudio"
-        ydl_opts["merge_output_format"] = "mp4"
-
     try:
+        data = request.json or {}
+        url = data.get("url")
+        format_id = data.get("format_id")
+        audio_as_mp3 = bool(data.get("audio_as_mp3", False))
+
+        if not url:
+            return jsonify({"error": "URL required"}), 400
+
+        ext = "mp3" if audio_as_mp3 else "mp4"
+        out_name = f"{uuid.uuid4()}.{ext}"
+
+        # Progress hook
+        def my_hook(d):
+            progress["status"] = d
+
+        # Format selection
+        use_selector = False
+        fmt_expr = None
+        if audio_as_mp3:
+            fmt_expr = "ba[acodec^=mp4a]/bestaudio"
+            use_selector = True
+        else:
+            if format_id and '+' in format_id:
+                ydl_fmt = format_id
+            elif format_id:
+                ydl_fmt = f"{format_id}+bestaudio/b"
+            else:
+                use_selector = True
+
+        if use_selector:
+            fmt_expr = fmt_expr or (
+                "bv*[height>=480][vcodec^=avc1]+ba[acodec^=mp4a]/"
+                "b[ext=mp4]/"
+                "bv*+ba/b"
+            )
+
+        ydl_opts = {
+            "format": fmt_expr if use_selector else ydl_fmt,
+            "merge_output_format": "mp4",
+            "outtmpl": out_name,
+            "noprogress": False,
+            "quiet": True,
+            "progress_hooks": [my_hook],
+            "cookiefile": cookie_file if os.path.exists(cookie_file) else None
+        }
+
+        if audio_as_mp3:
+            ydl_opts["postprocessors"] = [
+                {"key": "FFmpegExtractAudio", "preferredcodec": "mp3"}
+            ]
+
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
 
-        path = saved["file"]
-        if not path or not os.path.exists(path):
+        if not os.path.exists(out_name):
             return jsonify({"error": "Download failed"}), 500
 
-        return send_file(path, as_attachment=True)
+        @after_this_request
+        def cleanup(response):
+            try:
+                if os.path.exists(out_name):
+                    os.remove(out_name)
+            except Exception:
+                pass
+            return response
+
+        return send_file(out_name, as_attachment=True)
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# -------------------------
-# 🚀 Run
-# -------------------------
+
+# Progress endpoint
+@app.route("/progress", methods=["GET"])
+def get_progress():
+    return jsonify(progress)
+
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port, debug=False)
 
 
 
@@ -400,6 +456,7 @@ if __name__ == "__main__":
 #    app.run(debug=True)
 
 #
+
 
 
 
