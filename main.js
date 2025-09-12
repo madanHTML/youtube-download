@@ -1,17 +1,15 @@
-
 const ytUrl = document.getElementById('url-input');
-const searchBtn = document.getElementById('search-btn');
+const searchBtn = document.getElementById('search-btn');                 
 const videoDropdown = document.getElementById('video-dropdown-content');
 const audioDropdown = document.getElementById('audio-dropdown-content');
 const videoTitle = document.getElementById('video-title');
-const thumbnail = document.getElementById('thumbnail');
 
 // ---------- Fetch formats ----------
 searchBtn.onclick = async () => {
     let url = ytUrl.value.trim();
     if (!url) { alert("Link jaruri hai."); return; }
 
-    let res = await fetch('/formats', {
+    let res = await fetch('https://video-downloader-lxkw.onrender.com/formats', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url })
@@ -20,36 +18,32 @@ searchBtn.onclick = async () => {
     let data = await res.json();
     if (data.error) { alert(data.error); return; }
 
-    // Title & thumbnail
     videoTitle.innerText = data.title;
-    if (data.thumbnail) {
-        thumbnail.src = data.thumbnail;
-        thumbnail.style.display = 'block';
-    }
-
-    videoDropdown.innerHTML = "";
-    audioDropdown.innerHTML = "";
 
     // Video formats
+    videoDropdown.innerHTML = "";
     data.formats.filter(f => f.height).forEach(f => {
-        let txt = `${f.height}p (${f.ext})`;
+        let txt = `${f.height}p ${f.note || ""} (${f.ext})`;
         let a = document.createElement('a');
         a.href = "#";
         a.innerText = txt;
-        a.onclick = () => downloadFile(url, f.format_id, f.ext, f.title, "video");
+        a.onclick = () => downloadFile(url, f.id);
         videoDropdown.appendChild(a);
     });
 
     // Audio formats
+    audioDropdown.innerHTML = "";
     data.formats.filter(f => f.abr).forEach(f => {
-        let txt = `${f.abr} kbps (mp3)`;
+        let txt = `${f.abr} kbps (${f.ext})`;
         let a = document.createElement('a');
         a.href = "#";
         a.innerText = txt;
-        a.onclick = () => downloadFile(url, f.format_id, "mp3", f.title, "audio");
+        a.onclick = () => downloadFile(url, f.id);
         audioDropdown.appendChild(a);
     });
 };
+
+
 
 // ---------- Toggle dropdowns ----------
 document.getElementById('video-dropbtn').onclick = function() {
@@ -60,11 +54,11 @@ document.getElementById('audio-dropbtn').onclick = function() {
 };
 
 // ---------- Download ----------
-async function downloadFile(url, formatId, ext, title, type) {
-    let res = await fetch('/download', {
+async function downloadFile(url, formatId) {
+    let res = await fetch('https://video-downloader-lxkw.onrender.com/download', {
         method: 'POST',
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: url, format_id: formatId, type: type })
+        body: JSON.stringify({ url: url, format_id: formatId })
     });
 
     if (!res.ok) {
@@ -75,12 +69,13 @@ async function downloadFile(url, formatId, ext, title, type) {
     let blob = await res.blob();
     let link = document.createElement("a");
     link.href = window.URL.createObjectURL(blob);
-    link.download = `${title}.${ext}`;
+    link.download = "video";
     link.click();
+
+    setTimeout(() => {
+    window.location.reload();
+   }, 2000);
 }
-
-
-
 
 
 /*const ytUrl = document.getElementById('url-input');
@@ -436,6 +431,7 @@ fetch('/formats', {
         aq.innerHTML += `<option value="${f.id}">${f.ext} (${f.id})</option>`;
     });
 //}); */
+
 
 
 
