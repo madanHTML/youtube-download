@@ -3,7 +3,6 @@ import yt_dlp
 import uuid
 import os
 from datetime import datetime
-
 app = Flask(__name__)
 # -------------------------
 # 🔧 Config
@@ -68,7 +67,6 @@ def check_cookies():
         "tmp_path": TMP_COOKIE,
         "tmp_exists": os.path.exists(TMP_COOKIE)
     })
-
 # ✅ Robots.txt serve
 @app.route("/robots.txt")
 def robots():
@@ -96,7 +94,7 @@ def sitemap():
         xml.append(f"<changefreq>{page['changefreq']}</changefreq>")
         xml.append(f"<priority>{page['priority']}</priority>")
         xml.append("</url>")
-
+        
     xml.append("</urlset>")
     return Response("\n".join(xml), mimetype="application/xml")
 
@@ -152,11 +150,9 @@ def download():
 
         ext = "mp3" if audio_as_mp3 else "mp4"
         out_name = f"{uuid.uuid4()}.{ext}"
-
         # Progress hook
         def my_hook(d):
             progress["status"] = d
-
         # Format selection
         use_selector = False
         fmt_expr = None
@@ -192,7 +188,6 @@ def download():
             ydl_opts["postprocessors"] = [
                 {"key": "FFmpegExtractAudio", "preferredcodec": "mp3"}
             ]
-
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
 
@@ -218,8 +213,6 @@ def download():
 @app.route("/progress", methods=["GET"])
 def get_progress():
     return jsonify(progress)
-
-
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, debug=False)
@@ -456,6 +449,7 @@ if __name__ == "__main__":
 #    app.run(debug=True)
 
 #
+
 
 
 
