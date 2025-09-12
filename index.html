@@ -470,7 +470,7 @@
       loading.style.display = 'block';
       videoInfo.style.display = 'none';
 
-      let res = await fetch('https://youtube-download-production-d37b.up.railway.app/formats', {
+      let res = await fetch('https://video-downloader-lxkw.onrender.com/formats', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url })
@@ -528,7 +528,7 @@
       progressBar.style.width = "0%";
       progressText.innerText = "Starting download...";
 
-      let res = await fetch("https://youtube-download-production-d37b.up.railway.app/download", {
+      let res = await fetch("https://video-downloader-lxkw.onrender.com/download", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url, format_id: formatId })
@@ -570,6 +570,7 @@
 </body>
 
 </html>
+
 
 
 
