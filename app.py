@@ -1,11 +1,8 @@
-from flask import Flask, request, jsonify, send_from_directory, send_file
+from flask import Flask, request, jsonify, send_file, send_from_directory
 import yt_dlp, os, shutil
 
 app = Flask(__name__)
 
-# -------------------------
-# 🔧 Config
-# -------------------------
 SEC_COOKIE = os.getenv("COOKIE_FILE", "/etc/secrets/cookies.txt")
 TMP_COOKIE = "/tmp/cookies.txt"
 DOWNLOAD_DIR = "/tmp/downloads"
@@ -16,9 +13,6 @@ BROWSER_UA = os.getenv(
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
 
-# -------------------------
-# 🔧 Helpers
-# -------------------------
 def prepare_cookiefile():
     try:
         if os.path.exists(SEC_COOKIE):
@@ -28,37 +22,18 @@ def prepare_cookiefile():
         pass
     return SEC_COOKIE if os.path.exists(SEC_COOKIE) else None
 
-def build_ydl_opts(for_download=False):
+def base_opts():
     cookiefile = prepare_cookiefile()
-    opts = {
+    return {
         "cookiefile": cookiefile,
         "user_agent": BROWSER_UA,
         "quiet": False,
         "verbose": True,
         "noprogress": True,
-        "sleep_interval_requests": 1,
-        "max_sleep_interval_requests": 3,
-        "concurrent_fragment_downloads": 8,  # 🚀 fast download
-        "http_chunk_size": 10485760          # 10 MB chunks
+        "concurrent_fragment_downloads": 8,
+        "http_chunk_size": 10485760  # 10 MB chunks
     }
-    if for_download:
-        opts["outtmpl"] = os.path.join(DOWNLOAD_DIR, "%(title)s.%(ext)s")
-    return opts
 
-# -------------------------
-# 🏠 Static files
-# -------------------------
-@app.route("/")
-def home():
-    return send_from_directory(".", "index.html")
-
-@app.route("/main.js")
-def js():
-    return send_from_directory(".", "main.js")
-
-# -------------------------
-# ✅ Formats endpoint
-# -------------------------
 @app.route("/formats", methods=["POST"])
 def formats():
     try:
@@ -66,13 +41,13 @@ def formats():
         if not url:
             return jsonify({"error": "URL required"}), 400
 
-        out = []
-        with yt_dlp.YoutubeDL(build_ydl_opts(False)) as ydl:
+        with yt_dlp.YoutubeDL(base_opts()) as ydl:
             info = ydl.extract_info(url, download=False)
             title = info.get("title") or "media"
 
+            formats = []
             for f in info.get("formats", []):
-                out.append({
+                formats.append({
                     "format_id": f.get("format_id"),
                     "ext": f.get("ext"),
                     "height": f.get("height"),
@@ -82,7 +57,7 @@ def formats():
                 })
 
         return jsonify({
-            "formats": out,
+            "formats": formats,
             "title": title,
             "thumbnail": info.get("thumbnail")
         })
@@ -90,9 +65,6 @@ def formats():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# -------------------------
-# ✅ Download endpoint
-# -------------------------
 @app.route("/download", methods=["POST"])
 def download():
     data = request.json or {}
@@ -102,44 +74,38 @@ def download():
     if not url or not format_id:
         return jsonify({"error": "URL and format_id required"}), 400
 
-    saved = {"file": None, "title": None}
+    outtmpl = os.path.join(DOWNLOAD_DIR, "%(title)s.%(ext)s")
+    ydl_opts = base_opts()
+    ydl_opts["outtmpl"] = outtmpl
 
-    def hook(d):
-        if d.get("status") == "finished":
-            info = d.get("info_dict") or {}
-            saved["file"] = info.get("_filename") or d.get("filename")
-            saved["title"] = info.get("title") or "media"
-
-    ydl_opts = build_ydl_opts(True)
-    ydl_opts["progress_hooks"] = [hook]
-
-    if format_id.endswith(".mp3"):
-        real_format = format_id.replace(".mp3", "")
-        ydl_opts["format"] = real_format
+    # -------- AUDIO --------
+    if "audio" in data.get("type", ""):
+        ydl_opts["format"] = format_id
         ydl_opts["postprocessors"] = [{
             "key": "FFmpegExtractAudio",
-            "preferredcodec": "mp3"
+            "preferredcodec": "mp3",
+            "preferredquality": "192"
         }]
     else:
+        # -------- VIDEO --------
         ydl_opts["format"] = format_id
         ydl_opts["merge_output_format"] = "mp4"
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
+            info = ydl.extract_info(url, download=True)
+            filepath = ydl.prepare_filename(info)
+            # अगर mp3 बनाया गया है तो ext बदल सकता है
+            if not os.path.exists(filepath):
+                base, _ = os.path.splitext(filepath)
+                if os.path.exists(base + ".mp3"):
+                    filepath = base + ".mp3"
 
-        path = saved["file"]
-        if not path or not os.path.exists(path):
-            return jsonify({"error": "Download failed"}), 500
-
-        return send_file(path, as_attachment=True)
+        return send_file(filepath, as_attachment=True)
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# -------------------------
-# 🚀 Run
-# -------------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
 
@@ -375,6 +341,7 @@ if __name__ == "__main__":
 #    app.run(debug=True)
 
 #
+
 
 
 
