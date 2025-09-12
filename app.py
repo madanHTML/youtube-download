@@ -38,9 +38,11 @@ def build_ydl_opts(for_download=False):
         "noprogress": True,
         "sleep_interval_requests": 1,
         "max_sleep_interval_requests": 3,
+        "concurrent_fragment_downloads": 8,  # 🚀 fast download
+        "http_chunk_size": 10485760          # 10 MB chunks
     }
     if for_download:
-        opts["outtmpl"] = os.path.join(DOWNLOAD_DIR, "%(title)s [%(id)s].%(ext)s")
+        opts["outtmpl"] = os.path.join(DOWNLOAD_DIR, "%(title)s.%(ext)s")
     return opts
 
 # -------------------------
@@ -55,19 +57,7 @@ def js():
     return send_from_directory(".", "main.js")
 
 # -------------------------
-# 🔍 Check cookies
-# -------------------------
-@app.route("/check-cookies")
-def check_cookies():
-    return jsonify({
-        "sec_path": SEC_COOKIE,
-        "sec_exists": os.path.exists(SEC_COOKIE),
-        "tmp_path": TMP_COOKIE,
-        "tmp_exists": os.path.exists(TMP_COOKIE)
-    })
-
-# -------------------------
-# ✅ Formats endpoint (FIXED)
+# ✅ Formats endpoint
 # -------------------------
 @app.route("/formats", methods=["POST"])
 def formats():
@@ -79,38 +69,21 @@ def formats():
         out = []
         with yt_dlp.YoutubeDL(build_ydl_opts(False)) as ydl:
             info = ydl.extract_info(url, download=False)
+            title = info.get("title") or "media"
 
             for f in info.get("formats", []):
                 out.append({
-                    "format_id": f.get("format_id"),   # ✅ FIXED
+                    "format_id": f.get("format_id"),
                     "ext": f.get("ext"),
                     "height": f.get("height"),
                     "abr": f.get("abr"),
-                    "vcodec": f.get("vcodec"),
-                    "acodec": f.get("acodec"),
                     "note": f.get("format_note", ""),
-                    "audio_only": f.get("acodec") != "none" and f.get("vcodec") == "none",
-                    "video_only": f.get("vcodec") != "none" and f.get("acodec") == "none",
+                    "title": title
                 })
-
-        # Extra: Add MP3 virtual option if audio exists
-        audio_formats = [f for f in out if f["audio_only"]]
-        if audio_formats:
-            best_audio = max(audio_formats, key=lambda a: a.get("abr") or 0)
-            out.append({
-                "format_id": best_audio["format_id"],   # ✅ FIXED
-                "ext": "mp3",
-                "abr": best_audio.get("abr"),
-                "vcodec": "none",
-                "acodec": "mp3",
-                "note": "Extracted MP3",
-                "audio_only": True,
-                "video_only": False
-            })
 
         return jsonify({
             "formats": out,
-            "title": info.get("title"),
+            "title": title,
             "thumbnail": info.get("thumbnail")
         })
 
@@ -124,29 +97,31 @@ def formats():
 def download():
     data = request.json or {}
     url = data.get("url")
-    format_id = data.get("format_id")
-    audio_as_mp3 = data.get("audio_as_mp3", False)
+    format_id = str(data.get("format_id"))
 
     if not url or not format_id:
         return jsonify({"error": "URL and format_id required"}), 400
 
-    saved = {"file": None}
+    saved = {"file": None, "title": None}
+
     def hook(d):
         if d.get("status") == "finished":
             info = d.get("info_dict") or {}
             saved["file"] = info.get("_filename") or d.get("filename")
+            saved["title"] = info.get("title") or "media"
 
     ydl_opts = build_ydl_opts(True)
     ydl_opts["progress_hooks"] = [hook]
 
-    if audio_as_mp3 or str(format_id).endswith(".mp3"):
-        ydl_opts["format"] = format_id
+    if format_id.endswith(".mp3"):
+        real_format = format_id.replace(".mp3", "")
+        ydl_opts["format"] = real_format
         ydl_opts["postprocessors"] = [{
             "key": "FFmpegExtractAudio",
             "preferredcodec": "mp3"
         }]
     else:
-        ydl_opts["format"] = format_id if '+' in format_id else f"{format_id}+bestaudio"
+        ydl_opts["format"] = format_id
         ydl_opts["merge_output_format"] = "mp4"
 
     try:
@@ -400,6 +375,7 @@ if __name__ == "__main__":
 #    app.run(debug=True)
 
 #
+
 
 
 
