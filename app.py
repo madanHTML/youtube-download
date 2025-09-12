@@ -6,7 +6,7 @@ app = Flask(__name__)
 # -------------------------
 # 🔧 Config
 # -------------------------
-SEC_COOKIE = os.getenv("COOKIE_FILE", "cookies.txt")
+SEC_COOKIE = os.getenv("COOKIE_FILE", "/etc/secrets/cookies.txt")
 TMP_COOKIE = "/tmp/cookies.txt"
 DOWNLOAD_DIR = "/tmp/downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -399,6 +399,7 @@ if __name__ == "__main__":
 #    app.run(debug=True)
 
 #
+
 
 
 
