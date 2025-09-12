@@ -1,4 +1,85 @@
 const ytUrl = document.getElementById('url-input');
+const searchBtn = document.getElementById('search-btn');
+const videoDropdown = document.getElementById('video-dropdown-content');
+const audioDropdown = document.getElementById('audio-dropdown-content');
+const videoTitle = document.getElementById('video-title');
+const thumbImg = document.getElementById('video-thumb'); // 👈 thumbnail img element
+
+// ---------- Fetch formats ----------
+searchBtn.onclick = async () => {
+    let url = ytUrl.value.trim();
+    if (!url) { alert("Link jaruri hai."); return; }
+
+    let res = await fetch('/formats', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url })
+    });
+
+    let data = await res.json();
+    if (data.error) { alert(data.error); return; }
+
+    videoTitle.innerText = data.title;
+    if (data.thumbnail) {
+        thumbImg.src = data.thumbnail;
+        thumbImg.style.display = "block";
+    }
+
+    // Video formats
+    videoDropdown.innerHTML = "";
+    data.formats.filter(f => f.height).forEach(f => {
+        let txt = `${f.height}p (${f.ext})`;
+        let a = document.createElement('a');
+        a.href = "#";
+        a.innerText = txt;
+        a.onclick = () => downloadFile(url, f.format_id, f.ext, f.title);
+        videoDropdown.appendChild(a);
+    });
+
+    // Audio formats
+    audioDropdown.innerHTML = "";
+    data.formats.filter(f => f.abr).forEach(f => {
+        let txt = `${f.abr} kbps (${f.ext})`;
+        let a = document.createElement('a');
+        a.href = "#";
+        a.innerText = txt;
+        a.onclick = () => downloadFile(url, f.format_id, f.ext, f.title);
+        audioDropdown.appendChild(a);
+    });
+};
+
+// ---------- Toggle dropdowns ----------
+document.getElementById('video-dropbtn').onclick = function() {
+    videoDropdown.style.display = videoDropdown.style.display === 'block' ? 'none' : 'block';
+};
+document.getElementById('audio-dropbtn').onclick = function() {
+    audioDropdown.style.display = audioDropdown.style.display === 'block' ? 'none' : 'block';
+};
+
+// ---------- Download ----------
+async function downloadFile(url, formatId, ext, title) {
+    let res = await fetch('/download', {
+        method: 'POST',
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: url, format_id: formatId })
+    });
+
+    if (!res.ok) {
+        alert("Download failed");
+        return;
+    }
+
+    let blob = await res.blob();
+    let link = document.createElement("a");
+    link.href = window.URL.createObjectURL(blob);
+    link.download = `${title}.${ext}`;
+    link.click();
+}
+
+
+
+
+/*const ytUrl = document.getElementById('url-input');
 const searchBtn = document.getElementById('search-btn');                 
 const videoDropdown = document.getElementById('video-dropdown-content');
 const audioDropdown = document.getElementById('audio-dropdown-content');
@@ -351,6 +432,7 @@ fetch('/formats', {
         aq.innerHTML += `<option value="${f.id}">${f.ext} (${f.id})</option>`;
     });
 //}); */
+
 
 
 
