@@ -1,56 +1,74 @@
-from flask import Flask, request, jsonify, send_from_directory
-import yt_dlp
-import os
-import shutil
-import uuid
+from flask import Flask, request, jsonify, send_from_directory, send_file
+import yt_dlp, os, shutil
 
 app = Flask(__name__)
 
-# Secret cookie file (Render mounts as read-only)
+# -------------------------
+# 🔧 Config
+# -------------------------
 SEC_COOKIE = os.getenv("COOKIE_FILE", "/etc/secrets/cookies.txt")
-# Writable temp location
 TMP_COOKIE = "/tmp/cookies.txt"
+DOWNLOAD_DIR = "/tmp/downloads"
+os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-def prepare_cookiefile() -> str | None:
-    """
-    Copy secret cookies to /tmp so yt-dlp can read/write without
-    hitting read-only errors. Return path to use or None.
-    """
+BROWSER_UA = os.getenv(
+    "BROWSER_UA",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
+
+# -------------------------
+# 🔧 Helpers
+# -------------------------
+def prepare_cookiefile():
     try:
         if os.path.exists(SEC_COOKIE):
-            # Copy on each request so fresh secret is used
             shutil.copy(SEC_COOKIE, TMP_COOKIE)
             return TMP_COOKIE
-        return None
     except Exception:
-        # As last resort, try using secret path read-only
-        return SEC_COOKIE if os.path.exists(SEC_COOKIE) else None
+        pass
+    return SEC_COOKIE if os.path.exists(SEC_COOKIE) else None
 
+def build_ydl_opts(for_download=False):
+    cookiefile = prepare_cookiefile()
+    opts = {
+        "cookiefile": cookiefile,
+        "user_agent": BROWSER_UA,
+        "quiet": False,
+        "verbose": True,
+        "noprogress": True,
+        "sleep_interval_requests": 1,
+        "max_sleep_interval_requests": 3,
+    }
+    if for_download:
+        opts["outtmpl"] = os.path.join(DOWNLOAD_DIR, "%(title)s [%(id)s].%(ext)s")
+    return opts
+
+# -------------------------
+# 🏠 Static files
+# -------------------------
 @app.route("/")
 def home():
     return send_from_directory(".", "index.html")
 
 @app.route("/main.js")
-def serve_js():
+def js():
     return send_from_directory(".", "main.js")
 
+# -------------------------
+# 🔍 Check cookies
+# -------------------------
 @app.route("/check-cookies")
 def check_cookies():
-    path = SEC_COOKIE
-    if os.path.exists(path):
-        try:
-            with open(path, "r", encoding="utf-8", errors="ignore") as f:
-                head = []
-                for _ in range(5):
-                    try:
-                        head.append(next(f).strip())
-                    except StopIteration:
-                        break
-            return jsonify({"status": "found", "path": path, "preview": head})
-        except Exception as e:
-            return jsonify({"status": "error", "path": path, "error": str(e)}), 500
-    return jsonify({"status": "missing", "path": path}), 404
+    return jsonify({
+        "sec_path": SEC_COOKIE,
+        "sec_exists": os.path.exists(SEC_COOKIE),
+        "tmp_path": TMP_COOKIE,
+        "tmp_exists": os.path.exists(TMP_COOKIE)
+    })
 
+# -------------------------
+# ✅ Formats endpoint (FIXED)
+# -------------------------
 @app.route("/formats", methods=["POST"])
 def formats():
     try:
@@ -58,87 +76,97 @@ def formats():
         if not url:
             return jsonify({"error": "URL required"}), 400
 
-        cookiefile = prepare_cookiefile()
-
-        ydl_opts = {
-            "cookiefile": cookiefile,     # may be None -> no cookies
-            "quiet": True,
-            "noprogress": True,
-            # हल्का थ्रॉटल ताकि 429 कम लगे
-            "ratelimit": None,
-            "sleep_interval_requests": 1,
-            "max_sleep_interval_requests": 3,
-        }
-
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        out = []
+        with yt_dlp.YoutubeDL(build_ydl_opts(False)) as ydl:
             info = ydl.extract_info(url, download=False)
-            out = []
+
             for f in info.get("formats", []):
                 out.append({
-                    "format_id": f.get("format_id"),
+                    "format_id": f.get("format_id"),   # ✅ FIXED
                     "ext": f.get("ext"),
-                    "resolution": f.get("resolution"),
-                    "filesize": f.get("filesize")
+                    "height": f.get("height"),
+                    "abr": f.get("abr"),
+                    "vcodec": f.get("vcodec"),
+                    "acodec": f.get("acodec"),
+                    "note": f.get("format_note", ""),
+                    "audio_only": f.get("acodec") != "none" and f.get("vcodec") == "none",
+                    "video_only": f.get("vcodec") != "none" and f.get("acodec") == "none",
                 })
-        return jsonify(out)
+
+        # Extra: Add MP3 virtual option if audio exists
+        audio_formats = [f for f in out if f["audio_only"]]
+        if audio_formats:
+            best_audio = max(audio_formats, key=lambda a: a.get("abr") or 0)
+            out.append({
+                "format_id": best_audio["format_id"],   # ✅ FIXED
+                "ext": "mp3",
+                "abr": best_audio.get("abr"),
+                "vcodec": "none",
+                "acodec": "mp3",
+                "note": "Extracted MP3",
+                "audio_only": True,
+                "video_only": False
+            })
+
+        return jsonify({
+            "formats": out,
+            "title": info.get("title"),
+            "thumbnail": info.get("thumbnail")
+        })
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+# -------------------------
+# ✅ Download endpoint
+# -------------------------
 @app.route("/download", methods=["POST"])
 def download():
+    data = request.json or {}
+    url = data.get("url")
+    format_id = data.get("format_id")
+    audio_as_mp3 = data.get("audio_as_mp3", False)
+
+    if not url or not format_id:
+        return jsonify({"error": "URL and format_id required"}), 400
+
+    saved = {"file": None}
+    def hook(d):
+        if d.get("status") == "finished":
+            info = d.get("info_dict") or {}
+            saved["file"] = info.get("_filename") or d.get("filename")
+
+    ydl_opts = build_ydl_opts(True)
+    ydl_opts["progress_hooks"] = [hook]
+
+    if audio_as_mp3 or str(format_id).endswith(".mp3"):
+        ydl_opts["format"] = format_id
+        ydl_opts["postprocessors"] = [{
+            "key": "FFmpegExtractAudio",
+            "preferredcodec": "mp3"
+        }]
+    else:
+        ydl_opts["format"] = format_id if '+' in format_id else f"{format_id}+bestaudio"
+        ydl_opts["merge_output_format"] = "mp4"
+
     try:
-        data = request.json or {}
-        url = data.get("url")
-        format_id = data.get("format_id")
-        audio_as_mp3 = data.get("audio_as_mp3", False)
-
-        if not url or not format_id:
-            return jsonify({"error": "URL and format_id required"}), 400
-
-        out_ext = "mp3" if audio_as_mp3 else "mp4"
-        out_name = f"{uuid.uuid4()}.{out_ext}"
-
-        cookiefile = prepare_cookiefile()
-
-        # video+audio auto-merge unless '+' already present or only-audio wanted
-        ydl_fmt = format_id if (audio_as_mp3 or '+' in format_id) else f"{format_id}+bestaudio"
-
-        ydl_opts = {
-            "cookiefile": cookiefile,
-            "format": ydl_fmt,
-            "outtmpl": out_name,
-            "merge_output_format": "mp4",
-            "quiet": True,
-            "noprogress": True,
-        }
-        if audio_as_mp3:
-            ydl_opts["postprocessors"] = [{
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": "mp3"
-            }]
-
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
 
-        if not os.path.exists(out_name):
+        path = saved["file"]
+        if not path or not os.path.exists(path):
             return jsonify({"error": "Download failed"}), 500
 
-        # फ़ाइल को बाइनरी रीड कर के JSON में base64 नहीं भेज रहे;
-        # इस मिनिमल API में फ्रंटएंड सीधा डाउनलोड एन्डपॉइंट हिट करेगा।
-        return send_from_directory(".", out_name, as_attachment=True)
+        return send_file(path, as_attachment=True)
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-    finally:
-        # सफ़ाई: आउटपुट फाइल हटा दें
-        try:
-            if 'out_name' in locals() and os.path.exists(out_name):
-                os.remove(out_name)
-        except Exception:
-            pass
 
+# -------------------------
+# 🚀 Run
+# -------------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
-
 
 
 
@@ -370,6 +398,7 @@ if __name__ == "__main__":
 #    app.run(debug=True)
 
 #
+
 
 
 
