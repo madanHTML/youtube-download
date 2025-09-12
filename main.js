@@ -1,9 +1,10 @@
+
 const ytUrl = document.getElementById('url-input');
 const searchBtn = document.getElementById('search-btn');
 const videoDropdown = document.getElementById('video-dropdown-content');
 const audioDropdown = document.getElementById('audio-dropdown-content');
 const videoTitle = document.getElementById('video-title');
-const thumbImg = document.getElementById('video-thumb'); // 👈 thumbnail img element
+const thumbnail = document.getElementById('thumbnail');
 
 // ---------- Fetch formats ----------
 searchBtn.onclick = async () => {
@@ -19,31 +20,33 @@ searchBtn.onclick = async () => {
     let data = await res.json();
     if (data.error) { alert(data.error); return; }
 
+    // Title & thumbnail
     videoTitle.innerText = data.title;
     if (data.thumbnail) {
-        thumbImg.src = data.thumbnail;
-        thumbImg.style.display = "block";
+        thumbnail.src = data.thumbnail;
+        thumbnail.style.display = 'block';
     }
 
-    // Video formats
     videoDropdown.innerHTML = "";
+    audioDropdown.innerHTML = "";
+
+    // Video formats
     data.formats.filter(f => f.height).forEach(f => {
         let txt = `${f.height}p (${f.ext})`;
         let a = document.createElement('a');
         a.href = "#";
         a.innerText = txt;
-        a.onclick = () => downloadFile(url, f.format_id, f.ext, f.title);
+        a.onclick = () => downloadFile(url, f.format_id, f.ext, f.title, "video");
         videoDropdown.appendChild(a);
     });
 
     // Audio formats
-    audioDropdown.innerHTML = "";
     data.formats.filter(f => f.abr).forEach(f => {
-        let txt = `${f.abr} kbps (${f.ext})`;
+        let txt = `${f.abr} kbps (mp3)`;
         let a = document.createElement('a');
         a.href = "#";
         a.innerText = txt;
-        a.onclick = () => downloadFile(url, f.format_id, f.ext, f.title);
+        a.onclick = () => downloadFile(url, f.format_id, "mp3", f.title, "audio");
         audioDropdown.appendChild(a);
     });
 };
@@ -57,11 +60,11 @@ document.getElementById('audio-dropbtn').onclick = function() {
 };
 
 // ---------- Download ----------
-async function downloadFile(url, formatId, ext, title) {
+async function downloadFile(url, formatId, ext, title, type) {
     let res = await fetch('/download', {
         method: 'POST',
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: url, format_id: formatId })
+        body: JSON.stringify({ url: url, format_id: formatId, type: type })
     });
 
     if (!res.ok) {
@@ -75,6 +78,7 @@ async function downloadFile(url, formatId, ext, title) {
     link.download = `${title}.${ext}`;
     link.click();
 }
+
 
 
 
@@ -432,6 +436,7 @@ fetch('/formats', {
         aq.innerHTML += `<option value="${f.id}">${f.ext} (${f.id})</option>`;
     });
 //}); */
+
 
 
 
