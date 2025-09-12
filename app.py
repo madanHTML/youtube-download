@@ -2,8 +2,11 @@ from flask import Flask, request, jsonify, send_file, send_from_directory, after
 import yt_dlp
 import uuid
 import os
+import shutil
 from datetime import datetime
+
 app = Flask(__name__)
+
 # -------------------------
 # 🔧 Config
 # -------------------------
@@ -29,25 +32,12 @@ def prepare_cookiefile():
         pass
     return SEC_COOKIE if os.path.exists(SEC_COOKIE) else None
 
-def build_ydl_opts(for_download=False):
-    cookiefile = prepare_cookiefile()
-    opts = {
-        "cookiefile": cookiefile,
-        "user_agent": BROWSER_UA,
-        "quiet": False,
-        "verbose": True,
-        "noprogress": True,
-        "sleep_interval_requests": 1,
-        "max_sleep_interval_requests": 3,
-    }
-    if for_download:
-        opts["outtmpl"] = os.path.join(DOWNLOAD_DIR, "%(title)s [%(id)s].%(ext)s")
-    return opts
-# Global progress store
 progress = {}
 cookie_file = "cookies.txt"
 
+# -------------------------
 # Serve frontend
+# -------------------------
 @app.route("/")
 def home():
     return send_from_directory(".", "index.html")
@@ -67,6 +57,7 @@ def check_cookies():
         "tmp_path": TMP_COOKIE,
         "tmp_exists": os.path.exists(TMP_COOKIE)
     })
+
 # ✅ Robots.txt serve
 @app.route("/robots.txt")
 def robots():
@@ -99,10 +90,8 @@ def sitemap():
     return Response("\n".join(xml), mimetype="application/xml")
 
 # ===============================
-# Existing YT-DLP routes (unchanged)
+# 🎥 Get available formats + metadata
 # ===============================
-
-# Get available formats
 @app.route("/formats", methods=["POST"])
 def formats():
     try:
@@ -119,6 +108,16 @@ def formats():
         out = []
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
+
+            # ✅ extra metadata
+            metadata = {
+                "title": info.get("title"),
+                "thumbnail": info.get("thumbnail"),
+                "duration": info.get("duration"),
+                "uploader": info.get("uploader"),
+                "view_count": info.get("view_count"),
+            }
+
             for f in info.get("formats", []):
                 out.append({
                     "id": f.get("format_id"),
@@ -131,12 +130,13 @@ def formats():
                     "audio_only": f.get("acodec") != "none" and f.get("vcodec") == "none",
                     "video_only": f.get("vcodec") != "none" and f.get("acodec") == "none",
                 })
-        return jsonify({"formats": out})
+        return jsonify({"metadata": metadata, "formats": out})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-
-# Download with progress
+# ===============================
+# ⬇️ Download endpoint (video/audio)
+# ===============================
 @app.route("/download", methods=["POST"])
 def download():
     try:
@@ -149,50 +149,45 @@ def download():
             return jsonify({"error": "URL required"}), 400
 
         ext = "mp3" if audio_as_mp3 else "mp4"
-        out_name = f"{uuid.uuid4()}.{ext}"
-        # Progress hook
+        out_name = os.path.join(DOWNLOAD_DIR, f"{uuid.uuid4()}.{ext}")
+
         def my_hook(d):
             progress["status"] = d
-        # Format selection
-        use_selector = False
-        fmt_expr = None
+
+        # Format expression
         if audio_as_mp3:
             fmt_expr = "ba[acodec^=mp4a]/bestaudio"
-            use_selector = True
         else:
-            if format_id and '+' in format_id:
-                ydl_fmt = format_id
-            elif format_id:
-                ydl_fmt = f"{format_id}+bestaudio/b"
-            else:
-                use_selector = True
-
-        if use_selector:
-            fmt_expr = fmt_expr or (
-                "bv*[height>=480][vcodec^=avc1]+ba[acodec^=mp4a]/"
-                "b[ext=mp4]/"
-                "bv*+ba/b"
-            )
+            fmt_expr = format_id or "bv*[height>=480][vcodec^=avc1]+ba/best"
 
         ydl_opts = {
-            "format": fmt_expr if use_selector else ydl_fmt,
-            "merge_output_format": "mp4",
+            "format": fmt_expr,
+            "merge_output_format": "mp4" if not audio_as_mp3 else None,
             "outtmpl": out_name,
             "noprogress": False,
             "quiet": True,
             "progress_hooks": [my_hook],
-            "cookiefile": cookie_file if os.path.exists(cookie_file) else None
+            "cookiefile": cookie_file if os.path.exists(cookie_file) else None,
+
+            # ✅ Faster download options
+            "concurrent_fragment_downloads": 5,
+            "http_chunk_size": 5 * 1024 * 1024,
+            "retries": 3,
         }
 
         if audio_as_mp3:
             ydl_opts["postprocessors"] = [
                 {"key": "FFmpegExtractAudio", "preferredcodec": "mp3"}
             ]
+
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
+            info = ydl.extract_info(url, download=True)
 
         if not os.path.exists(out_name):
             return jsonify({"error": "Download failed"}), 500
+
+        # ✅ Send file with proper name
+        filename = f"{info.get('title')}.{ext}"
 
         @after_this_request
         def cleanup(response):
@@ -203,16 +198,21 @@ def download():
                 pass
             return response
 
-        return send_file(out_name, as_attachment=True)
+        return send_file(out_name, as_attachment=True, download_name=filename)
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-
-# Progress endpoint
+# ===============================
+# 📊 Progress endpoint
+# ===============================
 @app.route("/progress", methods=["GET"])
 def get_progress():
     return jsonify(progress)
+
+# ===============================
+# 🚀 Run
+# ===============================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, debug=False)
@@ -449,6 +449,7 @@ if __name__ == "__main__":
 #    app.run(debug=True)
 
 #
+
 
 
 
