@@ -412,8 +412,8 @@
       
       <div class="footer-section">
         <h3>Contact Us</h3>
-        <p><i class="fas fa-envelope"></i> Email: support@youtubedownloader.com</p>
-        <p><i class="fas fa-phone"></i> Phone: +1 (123) 456-7890</p>
+        <p><i class="fas fa-envelope"></i> Email: madankumar14112005@gmail.com</p>
+        <p><i class="fas fa-phone"></i> Phone: +1 (926) 424-9570</p>
         <p><i class="fas fa-map-marker-alt"></i> Address: 123 Internet Street, Web City</p>
       </div>
       
@@ -428,11 +428,11 @@
     </div>
     
     <div class="contact-icons">
-      <a href="#"><i class="fab fa-facebook-f"></i></a>
+      <a href="https://www.facebook.com/share/1A5SGnQWXV/"><i class="fab fa-facebook-f"></i></a>
       <a href="#"><i class="fab fa-twitter"></i></a>
-      <a href="#"><i class="fab fa-instagram"></i></a>
-      <a href="#"><i class="fab fa-youtube"></i></a>
-      <a href="#"><i class="fab fa-linkedin-in"></i></a>
+      <a href="https://www.instagram.com/reel/DND2ryHPQ9S/?igsh=MWVucDRkcnY2dWE3aA=="><i class="fab fa-instagram"></i></a>
+      <a href="https://youtube.com/@aiseekhoi?si=FXDY-UOoMnRwxEf6"><i class="fab fa-youtube"></i></a>
+      <a href="https://www.linkedin.com/in/madan-kumar-58192530a?utm_source=share&utm_campaign=share_via&utm_content=profile&utm_medium=android_app"><i class="fab fa-linkedin-in"></i></a>
     </div>
     
     <div class="copyright">
@@ -470,7 +470,7 @@
       loading.style.display = 'block';
       videoInfo.style.display = 'none';
 
-      let res = await fetch('https://video-downloader-lxkw.onrender.com/formats', {
+      let res = await fetch('https://youtube-download-production.up.railway.app/formats', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url })
@@ -528,7 +528,7 @@
       progressBar.style.width = "0%";
       progressText.innerText = "Starting download...";
 
-      let res = await fetch("https://video-downloader-lxkw.onrender.com/download", {
+      let res = await fetch("https://youtube-download-production.up.railway.app/download", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url, format_id: formatId })
@@ -570,6 +570,7 @@
 </body>
 
 </html>
+
 
 
 
