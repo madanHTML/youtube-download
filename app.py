@@ -2,7 +2,7 @@ from flask import Flask, request, jsonify, send_file, send_from_directory, after
 import yt_dlp
 import uuid
 import os
-import shutil
+import requests
 from datetime import datetime
 
 app = Flask(__name__)
@@ -23,25 +23,12 @@ BROWSER_UA = os.getenv(
 # -------------------------
 # 🔧 Helpers
 # -------------------------
-def prepare_cookiefile():
-    try:
-        if os.path.exists(SEC_COOKIE):
-            shutil.copy(SEC_COOKIE, TMP_COOKIE)
-            return TMP_COOKIE
-    except Exception:
-        pass
-    return SEC_COOKIE if os.path.exists(SEC_COOKIE) else None
-
 def build_ydl_opts(for_download=False):
-    cookiefile = prepare_cookiefile()
     opts = {
-        "cookiefile": cookiefile,
+        "cookiefile": SEC_COOKIE if os.path.exists(SEC_COOKIE) else None,
         "user_agent": BROWSER_UA,
         "quiet": False,
-        "verbose": True,
         "noprogress": True,
-        "sleep_interval_requests": 1,
-        "max_sleep_interval_requests": 3,
     }
     if for_download:
         opts["outtmpl"] = os.path.join(DOWNLOAD_DIR, "%(title)s [%(id)s].%(ext)s")
@@ -51,9 +38,7 @@ def build_ydl_opts(for_download=False):
 progress = {}
 cookie_file = "cookies.txt"
 
-# -------------------------
 # Serve frontend
-# -------------------------
 @app.route("/")
 def home():
     return send_from_directory(".", "index.html")
@@ -61,18 +46,6 @@ def home():
 @app.route("/main.js")
 def serve_js():
     return send_from_directory(".", "main.js")
-
-# -------------------------
-# 🔍 Check cookies
-# -------------------------
-@app.route("/check-cookies")
-def check_cookies():
-    return jsonify({
-        "sec_path": SEC_COOKIE,
-        "sec_exists": os.path.exists(SEC_COOKIE),
-        "tmp_path": TMP_COOKIE,
-        "tmp_exists": os.path.exists(TMP_COOKIE)
-    })
 
 # ✅ Robots.txt serve
 @app.route("/robots.txt")
@@ -106,7 +79,7 @@ def sitemap():
     return Response("\n".join(xml), mimetype="application/xml")
 
 # ===============================
-# Existing YT-DLP routes (unchanged)
+# Existing YT-DLP routes
 # ===============================
 
 # Get available formats
@@ -142,12 +115,9 @@ def formats():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# ===============================
-# ✅ Teen alag download endpoints
-# ===============================
-
-@app.route("/download/video", methods=["POST"])
-def download_video():
+# Download with progress + title + thumbnail
+@app.route("/download", methods=["POST"])
+def download():
     try:
         data = request.json or {}
         url = data.get("url")
@@ -158,15 +128,41 @@ def download_video():
             return jsonify({"error": "URL required"}), 400
 
         ext = "mp3" if audio_as_mp3 else "mp4"
-        out_name = f"{uuid.uuid4()}.{ext}"
+        out_name = os.path.join(DOWNLOAD_DIR, f"{uuid.uuid4()}.{ext}")
 
+        # Progress hook
         def my_hook(d):
             progress["status"] = d
 
+        # Extract info first (for title + thumbnail)
+        with yt_dlp.YoutubeDL(build_ydl_opts()) as ydl:
+            info = ydl.extract_info(url, download=False)
+            title = info.get("title", "unknown_title")
+            thumb_url = info.get("thumbnail")
+
+        # Save title in text file
+        title_file = os.path.join(DOWNLOAD_DIR, f"{uuid.uuid4()}_title.txt")
+        with open(title_file, "w", encoding="utf-8") as f:
+            f.write(title)
+
+        # Save thumbnail
+        thumb_file = None
+        if thumb_url:
+            try:
+                r = requests.get(thumb_url, timeout=10)
+                if r.status_code == 200:
+                    thumb_ext = ".jpg" if "jpg" in r.headers.get("Content-Type", "") else ".png"
+                    thumb_file = os.path.join(DOWNLOAD_DIR, f"{uuid.uuid4()}{thumb_ext}")
+                    with open(thumb_file, "wb") as f:
+                        f.write(r.content)
+            except Exception as e:
+                print("Thumbnail download error:", e)
+
+        # Format selection
         use_selector = False
         fmt_expr = None
         if audio_as_mp3:
-            fmt_expr = "bestaudio/best"
+            fmt_expr = "ba[acodec^=mp4a]/bestaudio"
             use_selector = True
         else:
             if format_id and '+' in format_id:
@@ -185,17 +181,17 @@ def download_video():
 
         ydl_opts = {
             "format": fmt_expr if use_selector else ydl_fmt,
-            "merge_output_format": "mp4" if not audio_as_mp3 else "mp3",
+            "merge_output_format": "mp4",
             "outtmpl": out_name,
             "noprogress": False,
             "quiet": True,
             "progress_hooks": [my_hook],
-            "cookiefile": cookie_file if os.path.exists(cookie_file) else None,
+            "cookiefile": cookie_file if os.path.exists(cookie_file) else None
         }
 
         if audio_as_mp3:
             ydl_opts["postprocessors"] = [
-                {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}
+                {"key": "FFmpegExtractAudio", "preferredcodec": "mp3"}
             ]
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -204,6 +200,7 @@ def download_video():
         if not os.path.exists(out_name):
             return jsonify({"error": "Download failed"}), 500
 
+        # Clean up after sending
         @after_this_request
         def cleanup(response):
             try:
@@ -213,77 +210,12 @@ def download_video():
                 pass
             return response
 
-        return send_file(out_name, as_attachment=True)
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/download/title", methods=["POST"])
-def download_title():
-    try:
-        data = request.json or {}
-        url = data.get("url")
-        if not url:
-            return jsonify({"error": "URL required"}), 400
-
-        with yt_dlp.YoutubeDL({"quiet": True}) as ydl:
-            info = ydl.extract_info(url, download=False)
-
-        title_file = f"{uuid.uuid4()}_title.txt"
-        with open(title_file, "w", encoding="utf-8") as f:
-            f.write(info.get("title", "Unknown Title"))
-
-        @after_this_request
-        def cleanup(response):
-            try:
-                if os.path.exists(title_file):
-                    os.remove(title_file)
-            except Exception:
-                pass
-            return response
-
-        return send_file(title_file, as_attachment=True)
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/download/thumb", methods=["POST"])
-def download_thumb():
-    try:
-        data = request.json or {}
-        url = data.get("url")
-        if not url:
-            return jsonify({"error": "URL required"}), 400
-
-        with yt_dlp.YoutubeDL({"quiet": True}) as ydl:
-            info = ydl.extract_info(url, download=False)
-
-        if "thumbnail" not in info:
-            return jsonify({"error": "Thumbnail not available"}), 404
-
-        thumb_url = info["thumbnail"]
-        thumb_file = f"{uuid.uuid4()}_thumb.jpg"
-
-        import requests
-        r = requests.get(thumb_url, timeout=10)
-        if r.status_code == 200:
-            with open(thumb_file, "wb") as f:
-                f.write(r.content)
-        else:
-            return jsonify({"error": "Failed to fetch thumbnail"}), 500
-
-        @after_this_request
-        def cleanup(response):
-            try:
-                if os.path.exists(thumb_file):
-                    os.remove(thumb_file)
-            except Exception:
-                pass
-            return response
-
-        return send_file(thumb_file, as_attachment=True)
+        # Send file + info about title & thumbnail
+        return jsonify({
+            "main_file": out_name,
+            "title_file": title_file,
+            "thumbnail_file": thumb_file
+        })
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -296,6 +228,7 @@ def get_progress():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, debug=False)
+
 
 
 
@@ -528,6 +461,7 @@ if __name__ == "__main__":
 #    app.run(debug=True)
 
 #
+
 
 
 
