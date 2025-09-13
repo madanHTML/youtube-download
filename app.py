@@ -2,8 +2,11 @@ from flask import Flask, request, jsonify, send_file, send_from_directory, after
 import yt_dlp
 import uuid
 import os
+import shutil
 from datetime import datetime
+
 app = Flask(__name__)
+
 # -------------------------
 # 🔧 Config
 # -------------------------
@@ -43,11 +46,14 @@ def build_ydl_opts(for_download=False):
     if for_download:
         opts["outtmpl"] = os.path.join(DOWNLOAD_DIR, "%(title)s [%(id)s].%(ext)s")
     return opts
+
 # Global progress store
 progress = {}
 cookie_file = "cookies.txt"
 
+# -------------------------
 # Serve frontend
+# -------------------------
 @app.route("/")
 def home():
     return send_from_directory(".", "index.html")
@@ -67,6 +73,7 @@ def check_cookies():
         "tmp_path": TMP_COOKIE,
         "tmp_exists": os.path.exists(TMP_COOKIE)
     })
+
 # ✅ Robots.txt serve
 @app.route("/robots.txt")
 def robots():
@@ -135,10 +142,12 @@ def formats():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+# ===============================
+# ✅ Teen alag download endpoints
+# ===============================
 
-# Download with progress
-@app.route("/download", methods=["POST"])
-def download():
+@app.route("/download/video", methods=["POST"])
+def download_video():
     try:
         data = request.json or {}
         url = data.get("url")
@@ -150,14 +159,14 @@ def download():
 
         ext = "mp3" if audio_as_mp3 else "mp4"
         out_name = f"{uuid.uuid4()}.{ext}"
-        # Progress hook
+
         def my_hook(d):
             progress["status"] = d
-        # Format selection
+
         use_selector = False
         fmt_expr = None
         if audio_as_mp3:
-            fmt_expr = "ba[acodec^=mp4a]/bestaudio"
+            fmt_expr = "bestaudio/best"
             use_selector = True
         else:
             if format_id and '+' in format_id:
@@ -176,18 +185,19 @@ def download():
 
         ydl_opts = {
             "format": fmt_expr if use_selector else ydl_fmt,
-            "merge_output_format": "mp4",
+            "merge_output_format": "mp4" if not audio_as_mp3 else "mp3",
             "outtmpl": out_name,
             "noprogress": False,
             "quiet": True,
             "progress_hooks": [my_hook],
-            "cookiefile": cookie_file if os.path.exists(cookie_file) else None
+            "cookiefile": cookie_file if os.path.exists(cookie_file) else None,
         }
 
         if audio_as_mp3:
             ydl_opts["postprocessors"] = [
-                {"key": "FFmpegExtractAudio", "preferredcodec": "mp3"}
+                {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}
             ]
+
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
 
@@ -209,10 +219,80 @@ def download():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/download/title", methods=["POST"])
+def download_title():
+    try:
+        data = request.json or {}
+        url = data.get("url")
+        if not url:
+            return jsonify({"error": "URL required"}), 400
+
+        with yt_dlp.YoutubeDL({"quiet": True}) as ydl:
+            info = ydl.extract_info(url, download=False)
+
+        title_file = f"{uuid.uuid4()}_title.txt"
+        with open(title_file, "w", encoding="utf-8") as f:
+            f.write(info.get("title", "Unknown Title"))
+
+        @after_this_request
+        def cleanup(response):
+            try:
+                if os.path.exists(title_file):
+                    os.remove(title_file)
+            except Exception:
+                pass
+            return response
+
+        return send_file(title_file, as_attachment=True)
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/download/thumb", methods=["POST"])
+def download_thumb():
+    try:
+        data = request.json or {}
+        url = data.get("url")
+        if not url:
+            return jsonify({"error": "URL required"}), 400
+
+        with yt_dlp.YoutubeDL({"quiet": True}) as ydl:
+            info = ydl.extract_info(url, download=False)
+
+        if "thumbnail" not in info:
+            return jsonify({"error": "Thumbnail not available"}), 404
+
+        thumb_url = info["thumbnail"]
+        thumb_file = f"{uuid.uuid4()}_thumb.jpg"
+
+        import requests
+        r = requests.get(thumb_url, timeout=10)
+        if r.status_code == 200:
+            with open(thumb_file, "wb") as f:
+                f.write(r.content)
+        else:
+            return jsonify({"error": "Failed to fetch thumbnail"}), 500
+
+        @after_this_request
+        def cleanup(response):
+            try:
+                if os.path.exists(thumb_file):
+                    os.remove(thumb_file)
+            except Exception:
+                pass
+            return response
+
+        return send_file(thumb_file, as_attachment=True)
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 # Progress endpoint
 @app.route("/progress", methods=["GET"])
 def get_progress():
     return jsonify(progress)
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, debug=False)
@@ -448,6 +528,7 @@ if __name__ == "__main__":
 #    app.run(debug=True)
 
 #
+
 
 
 
