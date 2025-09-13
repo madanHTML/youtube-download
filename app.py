@@ -3,9 +3,46 @@ import yt_dlp
 import uuid
 import os
 from datetime import datetime
-
 app = Flask(__name__)
+# -------------------------
+# 🔧 Config
+# -------------------------
+SEC_COOKIE = os.getenv("COOKIE_FILE", "/etc/secrets/cookies.txt")
+TMP_COOKIE = "/tmp/cookies.txt"
+DOWNLOAD_DIR = "/tmp/downloads"
+os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
+BROWSER_UA = os.getenv(
+    "BROWSER_UA",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
+
+# -------------------------
+# 🔧 Helpers
+# -------------------------
+def prepare_cookiefile():
+    try:
+        if os.path.exists(SEC_COOKIE):
+            shutil.copy(SEC_COOKIE, TMP_COOKIE)
+            return TMP_COOKIE
+    except Exception:
+        pass
+    return SEC_COOKIE if os.path.exists(SEC_COOKIE) else None
+
+def build_ydl_opts(for_download=False):
+    cookiefile = prepare_cookiefile()
+    opts = {
+        "cookiefile": cookiefile,
+        "user_agent": BROWSER_UA,
+        "quiet": False,
+        "verbose": True,
+        "noprogress": True,
+        "sleep_interval_requests": 1,
+        "max_sleep_interval_requests": 3,
+    }
+    if for_download:
+        opts["outtmpl"] = os.path.join(DOWNLOAD_DIR, "%(title)s [%(id)s].%(ext)s")
+    return opts
 # Global progress store
 progress = {}
 cookie_file = "cookies.txt"
@@ -19,6 +56,17 @@ def home():
 def serve_js():
     return send_from_directory(".", "main.js")
 
+# -------------------------
+# 🔍 Check cookies
+# -------------------------
+@app.route("/check-cookies")
+def check_cookies():
+    return jsonify({
+        "sec_path": SEC_COOKIE,
+        "sec_exists": os.path.exists(SEC_COOKIE),
+        "tmp_path": TMP_COOKIE,
+        "tmp_exists": os.path.exists(TMP_COOKIE)
+    })
 # ✅ Robots.txt serve
 @app.route("/robots.txt")
 def robots():
@@ -46,7 +94,7 @@ def sitemap():
         xml.append(f"<changefreq>{page['changefreq']}</changefreq>")
         xml.append(f"<priority>{page['priority']}</priority>")
         xml.append("</url>")
-
+        
     xml.append("</urlset>")
     return Response("\n".join(xml), mimetype="application/xml")
 
@@ -102,11 +150,9 @@ def download():
 
         ext = "mp3" if audio_as_mp3 else "mp4"
         out_name = f"{uuid.uuid4()}.{ext}"
-
         # Progress hook
         def my_hook(d):
             progress["status"] = d
-
         # Format selection
         use_selector = False
         fmt_expr = None
@@ -142,7 +188,6 @@ def download():
             ydl_opts["postprocessors"] = [
                 {"key": "FFmpegExtractAudio", "preferredcodec": "mp3"}
             ]
-
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
 
@@ -168,12 +213,9 @@ def download():
 @app.route("/progress", methods=["GET"])
 def get_progress():
     return jsonify(progress)
-
-
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, debug=False)
-
 
 
 
@@ -406,6 +448,7 @@ if __name__ == "__main__":
 #    app.run(debug=True)
 
 #
+
 
 
 
