@@ -1,9 +1,5 @@
-from flask import Flask, request, jsonify, send_file, send_from_directory, after_this_request, Response
-import yt_dlp
-import uuid
-import os
-import requests
-from datetime import datetime
+from flask import Flask, request, jsonify, send_from_directory, send_file
+import yt_dlp, os, shutil
 
 app = Flask(__name__)
 
@@ -23,66 +19,56 @@ BROWSER_UA = os.getenv(
 # -------------------------
 # 🔧 Helpers
 # -------------------------
+def prepare_cookiefile():
+    try:
+        if os.path.exists(SEC_COOKIE):
+            shutil.copy(SEC_COOKIE, TMP_COOKIE)
+            return TMP_COOKIE
+    except Exception:
+        pass
+    return SEC_COOKIE if os.path.exists(SEC_COOKIE) else None
+
 def build_ydl_opts(for_download=False):
+    cookiefile = prepare_cookiefile()
     opts = {
-        "cookiefile": SEC_COOKIE if os.path.exists(SEC_COOKIE) else None,
+        "cookiefile": cookiefile,
         "user_agent": BROWSER_UA,
         "quiet": False,
+        "verbose": True,
         "noprogress": True,
+        "sleep_interval_requests": 1,
+        "max_sleep_interval_requests": 3,
     }
     if for_download:
         opts["outtmpl"] = os.path.join(DOWNLOAD_DIR, "%(title)s [%(id)s].%(ext)s")
     return opts
 
-# Global progress store
-progress = {}
-cookie_file = "cookies.txt"
-
-# Serve frontend
+# -------------------------
+# 🏠 Static files
+# -------------------------
 @app.route("/")
 def home():
     return send_from_directory(".", "index.html")
 
 @app.route("/main.js")
-def serve_js():
+def js():
     return send_from_directory(".", "main.js")
 
-# ✅ Robots.txt serve
-@app.route("/robots.txt")
-def robots():
-    return Response(
-        "User-agent: *\nAllow: /\nSitemap: https://dolodear-1.onrender.com/sitemap.xml",
-        mimetype="text/plain"
-    )
+# -------------------------
+# 🔍 Check cookies
+# -------------------------
+@app.route("/check-cookies")
+def check_cookies():
+    return jsonify({
+        "sec_path": SEC_COOKIE,
+        "sec_exists": os.path.exists(SEC_COOKIE),
+        "tmp_path": TMP_COOKIE,
+        "tmp_exists": os.path.exists(TMP_COOKIE)
+    })
 
-# ✅ Sitemap.xml dynamic
-@app.route("/sitemap.xml")
-def sitemap():
-    pages = [
-        {"loc": "https://dolodear-1.onrender.com/", "priority": "1.0", "changefreq": "daily"},
-        {"loc": "https://dolodear-1.onrender.com/formats", "priority": "0.8", "changefreq": "weekly"},
-        {"loc": "https://dolodear-1.onrender.com/download", "priority": "0.8", "changefreq": "weekly"},
-    ]
-
-    xml = ['<?xml version="1.0" encoding="UTF-8"?>']
-    xml.append('<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">')
-
-    for page in pages:
-        xml.append("<url>")
-        xml.append(f"<loc>{page['loc']}</loc>")
-        xml.append(f"<lastmod>{datetime.utcnow().date()}</lastmod>")
-        xml.append(f"<changefreq>{page['changefreq']}</changefreq>")
-        xml.append(f"<priority>{page['priority']}</priority>")
-        xml.append("</url>")
-        
-    xml.append("</urlset>")
-    return Response("\n".join(xml), mimetype="application/xml")
-
-# ===============================
-# Existing YT-DLP routes
-# ===============================
-
-# Get available formats
+# -------------------------
+# ✅ Formats endpoint (FIXED)
+# -------------------------
 @app.route("/formats", methods=["POST"])
 def formats():
     try:
@@ -90,18 +76,13 @@ def formats():
         if not url:
             return jsonify({"error": "URL required"}), 400
 
-        ydl_opts = {
-            "cookiefile": cookie_file if os.path.exists(cookie_file) else None,
-            "quiet": True,
-            "noprogress": True
-        }
-
         out = []
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        with yt_dlp.YoutubeDL(build_ydl_opts(False)) as ydl:
             info = ydl.extract_info(url, download=False)
+
             for f in info.get("formats", []):
                 out.append({
-                    "id": f.get("format_id"),
+                    "format_id": f.get("format_id"),   # ✅ FIXED
                     "ext": f.get("ext"),
                     "height": f.get("height"),
                     "abr": f.get("abr"),
@@ -111,123 +92,81 @@ def formats():
                     "audio_only": f.get("acodec") != "none" and f.get("vcodec") == "none",
                     "video_only": f.get("vcodec") != "none" and f.get("acodec") == "none",
                 })
-        return jsonify({"formats": out})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
 
-# Download with progress + title + thumbnail
-@app.route("/download", methods=["POST"])
-def download():
-    try:
-        data = request.json or {}
-        url = data.get("url")
-        format_id = data.get("format_id")
-        audio_as_mp3 = bool(data.get("audio_as_mp3", False))
+        # Extra: Add MP3 virtual option if audio exists
+        audio_formats = [f for f in out if f["audio_only"]]
+        if audio_formats:
+            best_audio = max(audio_formats, key=lambda a: a.get("abr") or 0)
+            out.append({
+                "format_id": best_audio["format_id"],   # ✅ FIXED
+                "ext": "mp3",
+                "abr": best_audio.get("abr"),
+                "vcodec": "none",
+                "acodec": "mp3",
+                "note": "Extracted MP3",
+                "audio_only": True,
+                "video_only": False
+            })
 
-        if not url:
-            return jsonify({"error": "URL required"}), 400
-
-        ext = "mp3" if audio_as_mp3 else "mp4"
-        out_name = os.path.join(DOWNLOAD_DIR, f"{uuid.uuid4()}.{ext}")
-
-        # Progress hook
-        def my_hook(d):
-            progress["status"] = d
-
-        # Extract info first (for title + thumbnail)
-        with yt_dlp.YoutubeDL(build_ydl_opts()) as ydl:
-            info = ydl.extract_info(url, download=False)
-            title = info.get("title", "unknown_title")
-            thumb_url = info.get("thumbnail")
-
-        # Save title in text file
-        title_file = os.path.join(DOWNLOAD_DIR, f"{uuid.uuid4()}_title.txt")
-        with open(title_file, "w", encoding="utf-8") as f:
-            f.write(title)
-
-        # Save thumbnail
-        thumb_file = None
-        if thumb_url:
-            try:
-                r = requests.get(thumb_url, timeout=10)
-                if r.status_code == 200:
-                    thumb_ext = ".jpg" if "jpg" in r.headers.get("Content-Type", "") else ".png"
-                    thumb_file = os.path.join(DOWNLOAD_DIR, f"{uuid.uuid4()}{thumb_ext}")
-                    with open(thumb_file, "wb") as f:
-                        f.write(r.content)
-            except Exception as e:
-                print("Thumbnail download error:", e)
-
-        # Format selection
-        use_selector = False
-        fmt_expr = None
-        if audio_as_mp3:
-            fmt_expr = "ba[acodec^=mp4a]/bestaudio"
-            use_selector = True
-        else:
-            if format_id and '+' in format_id:
-                ydl_fmt = format_id
-            elif format_id:
-                ydl_fmt = f"{format_id}+bestaudio/b"
-            else:
-                use_selector = True
-
-        if use_selector:
-            fmt_expr = fmt_expr or (
-                "bv*[height>=480][vcodec^=avc1]+ba[acodec^=mp4a]/"
-                "b[ext=mp4]/"
-                "bv*+ba/b"
-            )
-
-        ydl_opts = {
-            "format": fmt_expr if use_selector else ydl_fmt,
-            "merge_output_format": "mp4",
-            "outtmpl": out_name,
-            "noprogress": False,
-            "quiet": True,
-            "progress_hooks": [my_hook],
-            "cookiefile": cookie_file if os.path.exists(cookie_file) else None
-        }
-
-        if audio_as_mp3:
-            ydl_opts["postprocessors"] = [
-                {"key": "FFmpegExtractAudio", "preferredcodec": "mp3"}
-            ]
-
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
-
-        if not os.path.exists(out_name):
-            return jsonify({"error": "Download failed"}), 500
-
-        # Clean up after sending
-        @after_this_request
-        def cleanup(response):
-            try:
-                if os.path.exists(out_name):
-                    os.remove(out_name)
-            except Exception:
-                pass
-            return response
-
-        # Send file + info about title & thumbnail
         return jsonify({
-            "main_file": out_name,
-            "title_file": title_file,
-            "thumbnail_file": thumb_file
+            "formats": out,
+            "title": info.get("title"),
+            "thumbnail": info.get("thumbnail")
         })
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# Progress endpoint
-@app.route("/progress", methods=["GET"])
-def get_progress():
-    return jsonify(progress)
+# -------------------------
+# ✅ Download endpoint
+# -------------------------
+@app.route("/download", methods=["POST"])
+def download():
+    data = request.json or {}
+    url = data.get("url")
+    format_id = data.get("format_id")
+    audio_as_mp3 = data.get("audio_as_mp3", False)
 
+    if not url or not format_id:
+        return jsonify({"error": "URL and format_id required"}), 400
+
+    saved = {"file": None}
+    def hook(d):
+        if d.get("status") == "finished":
+            info = d.get("info_dict") or {}
+            saved["file"] = info.get("_filename") or d.get("filename")
+
+    ydl_opts = build_ydl_opts(True)
+    ydl_opts["progress_hooks"] = [hook]
+
+    if audio_as_mp3 or str(format_id).endswith(".mp3"):
+        ydl_opts["format"] = format_id
+        ydl_opts["postprocessors"] = [{
+            "key": "FFmpegExtractAudio",
+            "preferredcodec": "mp3"
+        }]
+    else:
+        ydl_opts["format"] = format_id if '+' in format_id else f"{format_id}+bestaudio"
+        ydl_opts["merge_output_format"] = "mp4"
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+
+        path = saved["file"]
+        if not path or not os.path.exists(path):
+            return jsonify({"error": "Download failed"}), 500
+
+        return send_file(path, as_attachment=True)
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# -------------------------
+# 🚀 Run
+# -------------------------
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    app.run(host="0.0.0.0", port=5000)
 
 
 
@@ -461,6 +400,7 @@ if __name__ == "__main__":
 #    app.run(debug=True)
 
 #
+
 
 
 
