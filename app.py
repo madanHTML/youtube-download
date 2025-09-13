@@ -65,6 +65,37 @@ def check_cookies():
         "tmp_path": TMP_COOKIE,
         "tmp_exists": os.path.exists(TMP_COOKIE)
     })
+    # ✅ Robots.txt serve
+@app.route("/robots.txt")
+def robots():
+    return Response(
+        "User-agent: *\nAllow: /\nSitemap: https://video-downloader-lxkw.onrender.com/sitemap.xml",
+        mimetype="text/plain"
+    )
+
+# ✅ Sitemap.xml dynamic
+@app.route("/sitemap.xml")
+def sitemap():
+    pages = [
+        {"loc": "https://video-downloader-lxkw.onrender.com/", "priority": "1.0", "changefreq": "daily"},
+        {"loc": "https://video-downloader-lxkw.onrender.com/formats", "priority": "0.8", "changefreq": "weekly"},
+        {"loc": "https://video-downloader-lxkw.onrender.com/download", "priority": "0.8", "changefreq": "weekly"},
+    ]
+
+    xml = ['<?xml version="1.0" encoding="UTF-8"?>']
+    xml.append('<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">')
+
+    for page in pages:
+        xml.append("<url>")
+        xml.append(f"<loc>{page['loc']}</loc>")
+        xml.append(f"<lastmod>{datetime.utcnow().date()}</lastmod>")
+        xml.append(f"<changefreq>{page['changefreq']}</changefreq>")
+        xml.append(f"<priority>{page['priority']}</priority>")
+        xml.append("</url>")
+        
+    xml.append("</urlset>")
+    return Response("\n".join(xml), mimetype="application/xml")
+
 
 # -------------------------
 # ✅ Formats endpoint (FIXED)
@@ -167,6 +198,19 @@ def download():
 # -------------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -400,6 +444,7 @@ if __name__ == "__main__":
 #    app.run(debug=True)
 
 #
+
 
 
 
