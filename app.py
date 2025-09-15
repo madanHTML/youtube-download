@@ -6,7 +6,7 @@ app = Flask(__name__)
 # -------------------------
 # 🔧 Config
 # -------------------------
-SEC_COOKIE = os.getenv("COOKIE_FILE", "/etc/secrets/cookies.txt")
+SEC_COOKIE = os.getenv("COOKIE_FILE", "cookies.txt")
 TMP_COOKIE = "/tmp/cookies.txt"
 DOWNLOAD_DIR = "/tmp/downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -57,7 +57,7 @@ def js():
 # -------------------------
 # 🔍 Check cookies
 # -------------------------
-@app.route("/check-cookies")
+@app.route("/check-cookies.txt")
 def check_cookies():
     return jsonify({
         "sec_path": SEC_COOKIE,
@@ -444,6 +444,7 @@ if __name__ == "__main__":
 #    app.run(debug=True)
 
 #
+
 
 
 
