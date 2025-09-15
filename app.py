@@ -7,8 +7,8 @@ app = Flask(__name__)
 # -------------------------
 # 🔧 Config
 # -------------------------
-COOKIE_FILE = "cookies.txt"   # Root folder me rakhi hui cookies file
-DOWNLOAD_DIR = "downloads"    # Downloaded files isme aayenge
+COOKIE_FILE = "cookies.txt"   # Root folder me rakha hua cookies file
+DOWNLOAD_DIR = "downloads"    # Downloaded files isme save honge
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 BROWSER_UA = (
@@ -30,8 +30,6 @@ def build_ydl_opts(for_download=False):
         "quiet": False,
         "verbose": True,
         "noprogress": True,
-        "sleep_interval_requests": 1,
-        "max_sleep_interval_requests": 3,
     }
     if for_download:
         opts["outtmpl"] = os.path.join(DOWNLOAD_DIR, "%(title)s [%(id)s].%(ext)s")
@@ -62,7 +60,7 @@ def check_cookies():
 @app.route("/robots.txt")
 def robots():
     return Response(
-        "User-agent: *\nAllow: /\nSitemap: https://your-domain.com/sitemap.xml",
+        "User-agent: *\nAllow: /\nSitemap: https://your-domain.up.railway.app/sitemap.xml",
         mimetype="text/plain"
     )
 
@@ -70,9 +68,9 @@ def robots():
 @app.route("/sitemap.xml")
 def sitemap():
     pages = [
-        {"loc": "https://your-domain.com/", "priority": "1.0", "changefreq": "daily"},
-        {"loc": "https://your-domain.com/formats", "priority": "0.8", "changefreq": "weekly"},
-        {"loc": "https://your-domain.com/download", "priority": "0.8", "changefreq": "weekly"},
+        {"loc": "https://your-domain.up.railway.app/", "priority": "1.0", "changefreq": "daily"},
+        {"loc": "https://your-domain.up.railway.app/formats", "priority": "0.8", "changefreq": "weekly"},
+        {"loc": "https://your-domain.up.railway.app/download", "priority": "0.8", "changefreq": "weekly"},
     ]
 
     xml = ['<?xml version="1.0" encoding="UTF-8"?>']
@@ -189,7 +187,10 @@ def download():
         return jsonify({"error": str(e)}), 500
 
 # -------------------------
-# 🚀 Run
+# 🚀 Run (Railway Port fix)
 # -------------------------
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
+
+
