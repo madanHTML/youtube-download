@@ -2,19 +2,21 @@ from flask import Flask, request, jsonify, send_from_directory, send_file
 import yt_dlp, os, shutil
 
 app = Flask(__name__)
-
+# Global progress store
+progress = {}
+cookie_file = "cookies.txt"
 # -------------------------
 # 🔧 Config
 # -------------------------
-SEC_COOKIE = os.getenv("COOKIE_FILE", "cookies.txt")
-TMP_COOKIE = "/tmp/cookies.txt"
-DOWNLOAD_DIR = "/tmp/downloads"
-os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+#SEC_COOKIE = os.getenv("COOKIE_FILE", "cookies.txt")
+#TMP_COOKIE = "/tmp/cookies.txt"
+#DOWNLOAD_DIR = "/tmp/downloads"
+#os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-BROWSER_UA = os.getenv(
-    "BROWSER_UA",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-)
+#BROWSER_UA = os.getenv(
+#    "BROWSER_UA",
+#    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+#)
 
 # -------------------------
 # 🔧 Helpers
@@ -96,7 +98,11 @@ def sitemap():
     xml.append("</urlset>")
     return Response("\n".join(xml), mimetype="application/xml")
 
-
+  ydl_opts = {
+            "cookiefile": cookie_file if os.path.exists(cookie_file) else None,
+            "quiet": True,
+            "noprogress": True
+        }
 # -------------------------
 # ✅ Formats endpoint (FIXED)
 # -------------------------
@@ -169,6 +175,7 @@ def download():
 
     ydl_opts = build_ydl_opts(True)
     ydl_opts["progress_hooks"] = [hook]
+    "cookiefile": cookie_file if os.path.exists(cookie_file) else None
 
     if audio_as_mp3 or str(format_id).endswith(".mp3"):
         ydl_opts["format"] = format_id
@@ -444,6 +451,7 @@ if __name__ == "__main__":
 #    app.run(debug=True)
 
 #
+
 
 
 
