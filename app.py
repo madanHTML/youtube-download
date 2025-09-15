@@ -7,13 +7,13 @@ app = Flask(__name__)
 # -------------------------
 # 🔧 Config
 # -------------------------
-#COOKIE_FILE = "cookies.txt"   # Root folder me rakhi hui cookies file
-#DOWNLOAD_DIR = "downloads"    # Downloaded files isme aayenge
-#os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+COOKIE_FILE = "cookies.txt"   # Root folder me rakhi hui cookies file
+DOWNLOAD_DIR = "downloads"    # Downloaded files isme aayenge
+os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-#BROWSER_UA = (
- #   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-#    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+BROWSER_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
 
 # -------------------------
@@ -193,4 +193,3 @@ def download():
 # -------------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
-
