@@ -139,7 +139,7 @@ def formats():
         return jsonify({"error": str(e)}), 500
 
 # -------------------------
-# ✅ Download endpoint
+# ✅ Download endpoint (Fixed for video+audio merge)
 # -------------------------
 @app.route("/download", methods=["POST"])
 def download():
@@ -163,14 +163,16 @@ def download():
     if os.path.exists(COOKIE_FILE):
         ydl_opts["cookiefile"] = COOKIE_FILE
 
+    # ✅ Audio-only → MP3
     if audio_as_mp3 or str(format_id).endswith(".mp3"):
-        ydl_opts["format"] = format_id
+        ydl_opts["format"] = "bestaudio"
         ydl_opts["postprocessors"] = [{
             "key": "FFmpegExtractAudio",
             "preferredcodec": "mp3"
         }]
     else:
-        ydl_opts["format"] = format_id if '+' in format_id else f"{format_id}+bestaudio"
+        # ✅ Video always with audio
+        ydl_opts["format"] = f"{format_id}+bestaudio/best"
         ydl_opts["merge_output_format"] = "mp4"
 
     try:
@@ -192,5 +194,3 @@ def download():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
-
-
