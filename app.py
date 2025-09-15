@@ -69,7 +69,7 @@ def check_cookies():
 @app.route("/robots.txt")
 def robots():
     return Response(
-        "User-agent: *\nAllow: /\nSitemap: https://video-downloader-lxkw.onrender.com/sitemap.xml",
+        "User-agent: *\nAllow: /\nSitemap: https://youtube-download-production-d37b.up.railway.app/sitemap.xml",
         mimetype="text/plain"
     )
 
@@ -77,9 +77,9 @@ def robots():
 @app.route("/sitemap.xml")
 def sitemap():
     pages = [
-        {"loc": "https://video-downloader-lxkw.onrender.com/", "priority": "1.0", "changefreq": "daily"},
-        {"loc": "https://video-downloader-lxkw.onrender.com/formats", "priority": "0.8", "changefreq": "weekly"},
-        {"loc": "https://video-downloader-lxkw.onrender.com/download", "priority": "0.8", "changefreq": "weekly"},
+        {"loc": "https://youtube-download-production-d37b.up.railway.app/", "priority": "1.0", "changefreq": "daily"},
+        {"loc": "https://youtube-download-production-d37b.up.railway.app/formats", "priority": "0.8", "changefreq": "weekly"},
+        {"loc": "https://youtube-download-production-d37b.up.railway.app/download", "priority": "0.8", "changefreq": "weekly"},
     ]
 
     xml = ['<?xml version="1.0" encoding="UTF-8"?>']
@@ -444,6 +444,7 @@ if __name__ == "__main__":
 #    app.run(debug=True)
 
 #
+
 
 
 
